@@ -1891,8 +1891,10 @@ export class DiscordAdapter {
   /** A guild's channels as the gateway keeps them: GUILD_CREATE lists every
    *  channel and updates follow, so the guild's own cache is whole while the
    *  guild is available, and reading it writes nothing to the cache that a
-   *  REST reply could make older (refetchChannel). Threads aren't listed, as
-   *  the REST list never had them; categories and forums are. A guild in an
+   *  REST reply could make older (refetchChannel). Active threads are listed
+   *  from that cache too (the gateway syncs them, THREAD_LIST_SYNC included),
+   *  labelled by id since names don't address them; archived ones aren't.
+   *  Categories and forums are listed. A guild in an
    *  outage is refused rather than listed from what it held before, before
    *  anything is fetched for it, and again after, since an outage can begin
    *  meanwhile. A stale channel of the guild is fetched first (refreshStale),
@@ -1913,45 +1915,35 @@ export class DiscordAdapter {
     const names = this.nameView();
     const result: DiscordChannelInfo[] = [];
     guild.channels.cache.forEach((c: GuildBasedChannel) => {
-      if (!c.isThread()) {
-        if (this.isStale(c.id)) return;
-        if (!this.channelAllowed(guildId, c.id, c.parentId)) return;
-        const facts = this.channelFacts(c, names);
+      if (this.isStale(c.id)) return;
+      if (!this.channelAllowed(guildId, c.id, c.parentId)) return;
+      if (c.isThread()) {
+        // An archived thread lingers in the cache but isn't an ongoing
+        // conversation; it's left out.
+        if (c.archived) return;
+        // A thread's label is its `discord:<guild>:<thread>` composite, not
+        // channelLabelFor's display-only `#parent › thread (Guild)`: names
+        // don't address threads (resolveChannelRef), so a name label would
+        // be unresolvable — or, when a channel shares the thread's name,
+        // resolve to THAT channel and deliver there.
         result.push({
           id: c.id,
           name: c.name,
           type: mapChannelType(c.type),
           parentId: c.parentId ?? undefined,
-          label: facts ? channelLabelFor(facts) : mcplChannelId(guildId, c.id),
+          label: mcplChannelId(guildId, c.id),
         });
+        return;
       }
-    });
-    // Active threads are not part of guild.channels.fetch(), so without this
-    // an agent can't discover ongoing thread conversations. Same visibility
-    // filter as channels (a thread under an allowed parent is allowed).
-    //
-    // A thread's label is its `discord:<guild>:<thread>` composite, not
-    // `#name (Guild)`: name resolution excludes threads (see
-    // resolveChannelRef), so a name label would be unresolvable — or, when a
-    // channel shares the thread's name, resolve to THAT channel and deliver
-    // there. The composite always resolves to the thread itself.
-    try {
-      const listed = new Set(result.map((c) => c.id));
-      const active = await guild.channels.fetchActiveThreads();
-      active.threads.forEach((t) => {
-        if (listed.has(t.id) || !this.channelAllowed(guildId, t.id, t.parentId)) return;
-        result.push({
-          id: t.id,
-          name: t.name,
-          type: mapChannelType(t.type),
-          parentId: t.parentId ?? undefined,
-          label: mcplChannelId(guildId, t.id),
-        });
+      const facts = this.channelFacts(c, names);
+      result.push({
+        id: c.id,
+        name: c.name,
+        type: mapChannelType(c.type),
+        parentId: c.parentId ?? undefined,
+        label: facts ? channelLabelFor(facts) : mcplChannelId(guildId, c.id),
       });
-    } catch (err) {
-      // Best-effort: the channel listing above still stands.
-      console.error(`[discord-mcpl] listing active threads failed for guild ${guildId}:`, (err as Error).message);
-    }
+    });
     return result;
   }
 

@@ -1,101 +1,103 @@
 /**
- * listChannels includes active threads. discord.js's guild.channels.fetch()
- * does not return threads, so they are fetched separately
- * (guild.channels.fetchActiveThreads()) and filtered the same way channels are.
+ * list_channels lists a guild's live threads, from the guild's channel cache
+ * as it does its channels: the gateway keeps the threads there (GUILD_CREATE,
+ * THREAD_LIST_SYNC and the thread events), so listing them fetches nothing
+ * that could bypass the freshness rule (refetchChannel). An archived thread
+ * isn't listed, nor a stale one, and the channel filter admits a thread
+ * through its parent. A thread's label is its `discord:<guild>:<thread>` id,
+ * since names don't address threads: a `#name (Guild)` label would not
+ * resolve, or would resolve to a channel of the same name.
+ *
+ * The guild is built with discord.js's own managers, as in
+ * registration-lifecycle.test.ts.
  */
-
-import { describe, it } from 'node:test';
+import { it, type TestContext } from 'node:test';
 import * as assert from 'node:assert/strict';
-
+import { ChannelType } from 'discord.js';
 import { DiscordAdapter } from '../src/discord-adapter.js';
 
-const channel = (id: string, name: string, parentId: string | null = null) => ({ id, name, type: 0, parentId });
-const thread = (id: string, name: string, parentId: string) => ({ id, name, type: 11, parentId });
+const G = '100000000000000001';
+const P = '100000000000000002';
+const Q = '100000000000000003';
+const BOT = '100000000000000004';
+const U = '100000000000000005';
+const TH = '100000000000000006';
+const TQ = '100000000000000007';
+const idOf = (channelId: string) => `discord:${G}:${channelId}`;
+const bot = { id: BOT, username: 'bot', discriminator: '0', avatar: null };
+const channelData = (id: string, name: string) => ({ id, guild_id: G, type: ChannelType.GuildText, name, parent_id: null });
+const threadData = (id: string, name: string, parent: string, archived = false) => ({
+  id, guild_id: G, type: ChannelType.PublicThread, name, parent_id: parent, owner_id: U,
+  thread_metadata: { archived, auto_archive_duration: 60, archive_timestamp: new Date().toISOString(), locked: false },
+});
 
-function makeAdapter(opts: {
-  channels: ReturnType<typeof channel>[];
-  threads: ReturnType<typeof thread>[] | Error;
-  guildChannels?: Record<string, string[]>;
+/** A guild with channels P (`general`) and Q (`planning`), and the given
+ *  threads, under the given channel filter. */
+function fixture(t: TestContext, opts: {
+  threads: Array<Record<string, unknown>>;
+  guildChannels?: string[];
 }) {
-  const adapter = new DiscordAdapter({ token: 'not-used', guildChannels: opts.guildChannels });
-  const internals = adapter as unknown as { client: { destroy(): void } };
-  internals.client.destroy();
-  const guild = {
-    id: 'g1',
-    name: 'Test Guild',
-    channels: {
-      // discord.js's live cache holds threads too; resolveChannelRef reads it.
-      cache: new Map<string, unknown>([
-        ...opts.channels.map((c) => [c.id, c] as const),
-        ...(opts.threads instanceof Error ? [] : opts.threads.map((t) => [t.id, t] as const)),
-      ]),
-      fetch: async () => new Map(opts.channels.map((c) => [c.id, c])),
-      fetchActiveThreads: async () => {
-        if (opts.threads instanceof Error) throw opts.threads;
-        return { threads: new Map(opts.threads.map((t) => [t.id, t])) };
-      },
-    },
-  };
-  internals.client = {
-    destroy() {},
-    guilds: { fetch: async () => guild, cache: new Map([[guild.id, guild]]) },
-    user: { id: 'bot_1', username: 'bot', displayName: 'Bot', bot: true },
-  } as never;
-  return adapter;
+  const adapter = new DiscordAdapter({
+    token: 'unused',
+    ...(opts.guildChannels ? { guildChannels: { [G]: opts.guildChannels } } : {}),
+  });
+  const client = adapter.rawClient as any;
+  t.after(() => client.destroy());
+  client.user = client.users._add({ ...bot, bot: true });
+  const guild = client.guilds._add({
+    id: G, name: 'Guild', owner_id: BOT, roles: [],
+    channels: [channelData(P, 'general'), channelData(Q, 'planning')],
+  });
+  guild.members._add({ user: bot, roles: [] });
+  for (const thread of opts.threads) client.channels._add(thread);
+  const get = t.mock.method(client.rest, 'get', async () => { throw new Error('Service Unavailable'); });
+  return { adapter, client, get };
 }
 
-describe('listChannels: active threads', () => {
-  it('lists active threads alongside channels, typed and labelled', async () => {
-    const adapter = makeAdapter({
-      channels: [channel('c1', 'general')],
-      threads: [thread('t1', 'planning', 'c1')],
-    });
-    const listed = await adapter.listChannels('g1');
-    assert.deepEqual(listed.map((c) => c.id), ['c1', 't1']);
-    const t = listed.find((c) => c.id === 't1')!;
-    assert.equal(t.type, 'thread');
-    assert.equal(t.parentId, 'c1');
-    assert.equal(t.label, 'discord:g1:t1');
-  });
+it('list_channels lists live threads from the cache, typed and labelled by id, and fetches nothing', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
+  const listed = await f.adapter.listChannels(G);
+  assert.deepEqual(listed.map((c) => c.id).sort(), [P, Q, TH].sort());
+  const thread = listed.find((c) => c.id === TH)!;
+  assert.equal(thread.type, 'thread');
+  assert.equal(thread.name, 'topic');
+  assert.equal(thread.parentId, P);
+  assert.equal(thread.label, idOf(TH));
+  assert.equal(f.get.mock.callCount(), 0, 'no REST call: the gateway keeps the threads in the cache');
+});
 
-  // A name-based label (`#planning (Test Guild)`) would be unresolvable for a
-  // thread — the resolver excludes threads — or, worse, resolve to a regular
-  // channel of the same name and send there. The listed address must reach
-  // the thread itself.
-  it("gives threads an address that resolves to the thread, not a same-named channel", async () => {
-    const adapter = makeAdapter({
-      channels: [channel('c1', 'general'), channel('c2', 'planning')],
-      threads: [thread('t1', 'planning', 'c1')],
-    });
-    const listed = await adapter.listChannels('g1');
-    const t = listed.find((c) => c.id === 't1')!;
-    const resolved = adapter.resolveChannelRef(t.label);
-    assert.ok(resolved.ok, `thread label ${t.label} did not resolve`);
-    assert.equal(resolved.id, 't1');
+it("a thread named like a channel is listed by a label that resolves to the thread, not the channel", async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'planning', P)] });
+  const listed = await f.adapter.listChannels(G);
+  const thread = listed.find((c) => c.id === TH)!;
+  const resolved = f.adapter.resolveChannelRef(thread.label);
+  assert.ok(resolved.ok, `thread label ${thread.label} did not resolve`);
+  assert.equal(resolved.id, TH);
+  // Every listed label round-trips to its own entry.
+  for (const c of listed) {
+    const r = f.adapter.resolveChannelRef(c.label);
+    assert.ok(r.ok && r.id === c.id, `${c.label} should resolve to ${c.id}`);
+  }
+  assert.equal(listed.find((c) => c.id === Q)?.label, '#planning (Guild)', "the channel keeps its name label");
+});
 
-    // Every listed label round-trips to its own entry.
-    for (const c of listed) {
-      const r = adapter.resolveChannelRef(c.label);
-      assert.ok(r.ok && r.id === c.id, `${c.label} should resolve to ${c.id}`);
-    }
-  });
+it('list_channels leaves out an archived thread', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P), threadData(TQ, 'done', P, true)] });
+  const ids = (await f.adapter.listChannels(G)).map((c) => c.id);
+  assert.ok(ids.includes(TH));
+  assert.ok(!ids.includes(TQ));
+});
 
-  it('applies the channel filter to threads through their parent', async () => {
-    const adapter = makeAdapter({
-      channels: [channel('c1', 'general'), channel('c2', 'private')],
-      threads: [thread('t1', 'allowed-thread', 'c1'), thread('t2', 'hidden-thread', 'c2')],
-      guildChannels: { g1: ['c1'] },
-    });
-    const ids = (await adapter.listChannels('g1')).map((c) => c.id);
-    assert.deepEqual(ids, ['c1', 't1']);
-  });
+it('list_channels admits a thread through its parent, as the channel filter does', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'allowed', P), threadData(TQ, 'hidden', Q)], guildChannels: [P] });
+  const ids = (await f.adapter.listChannels(G)).map((c) => c.id);
+  assert.deepEqual(ids.sort(), [P, TH].sort());
+});
 
-  it('still returns the channels if fetching threads fails', async () => {
-    const adapter = makeAdapter({
-      channels: [channel('c1', 'general')],
-      threads: new Error('Missing Access'),
-    });
-    const ids = (await adapter.listChannels('g1')).map((c) => c.id);
-    assert.deepEqual(ids, ['c1']);
-  });
+it('list_channels leaves out a thread still stale when its fetch fails', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
+  (f.adapter as any).markStale(TH, G);
+  const ids = (await f.adapter.listChannels(G)).map((c) => c.id);
+  assert.equal(f.adapter.isStale(TH), true);
+  assert.deepEqual(ids.sort(), [P, Q].sort());
 });

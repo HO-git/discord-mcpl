@@ -734,7 +734,7 @@ it("a batch of facts reads every channel's name against one view of the candidat
   const get = t.mock.method(f.client.rest, 'get', async () => []);
   scans = 0;
   const listing = await f.adapter.listChannels(G);
-  assert.equal(listing.length, 41);
+  assert.equal(listing.length, 42, 'the 41 channels and the live thread');
   assert.equal(scans, 1, 'and so does list_channels');
   assert.equal(get.mock.callCount(), 0, 'which reads the guild from the cache');
 });
@@ -1101,7 +1101,7 @@ it("a channel update that changes no name, kind or category re-derives none of i
   assert.equal(f.label(TH), '#after › topic (Guild)');
 });
 
-it("list_channels lists the guild's own channels from the cache, every kind but threads, and refuses a guild in an outage", async (t) => {
+it("list_channels lists the guild's own channels from the cache, every kind, its live threads by id, and refuses a guild in an outage", async (t) => {
   const V = '100000000000000009';
   const A = '100000000000000023';
   const F = '100000000000000024';
@@ -1111,7 +1111,11 @@ it("list_channels lists the guild's own channels from the cache, every kind but 
   ] });
   const get = t.mock.method(f.client.rest, 'get', async () => []);
   const listed = await f.adapter.listChannels(G);
-  assert.deepEqual(listed.map((c) => c.id).sort(), [P, V, A, F, C1, C2].sort(), 'the thread in the cache is not listed');
+  assert.deepEqual(listed.map((c) => c.id).sort(), [P, V, A, F, C1, C2, TH].sort(), 'the live thread in the cache is listed');
+  const thread = listed.find((c) => c.id === TH);
+  assert.equal(thread?.type, 'thread');
+  assert.equal(thread?.parentId, P);
+  assert.equal(thread?.label, threadMcplId, 'by its id, which a name never reaches');
   assert.equal(get.mock.callCount(), 0);
   // The guild comes back with P alone: the listing is what it came back with.
   f.comesBack();
@@ -1764,7 +1768,7 @@ it("list_channels leaves out the channels the channel filter excludes, categorie
   const Z = '100000000000000029';
   const f = fixture(t, { guildChannels: [C1, P], channels: [...categories, inCategory(C1), { ...channelData(Z, ChannelType.GuildText, 'elsewhere'), parent_id: C2 }] });
   const listed = await f.adapter.listChannels(G);
-  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1, X].sort());
+  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1, X, TH].sort(), "P's thread is admitted through P");
 });
 
 it("a cached stale channel has no known name", (t) => {
@@ -2230,7 +2234,7 @@ it("list_channels fetches a stale channel first, and lists it as Discord has it 
   assert.equal(get.mock.callCount(), 2);
   assert.equal(f.adapter.isStale(X), false);
   assert.equal(f.adapter.isStale(P), false);
-  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1].sort(), 'Discord has X outside the filters');
+  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1, TH].sort(), 'Discord has X outside the filters, and its thread with it');
   assert.equal(listed.find((c) => c.id === P)?.name, 'after');
 });
 
@@ -2257,7 +2261,7 @@ it("list_channels leaves out a channel still stale when its fetch fails", async 
   t.mock.method(f.client.rest, 'get', async () => { throw new Error('Service Unavailable'); });
   const listed = await f.adapter.listChannels(G);
   assert.equal(f.adapter.isStale(X), true);
-  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1].sort());
+  assert.deepEqual(listed.map((c) => c.id).sort(), [P, C1, TH].sort(), "and so is X's thread, admitted only through X");
 });
 
 it("a name-addressed send fetches no stale thread, and no channel its server's return left out, before it resolves", async (t) => {
