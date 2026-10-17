@@ -360,6 +360,8 @@ describe('reply and reaction tools', () => {
       },
       async sendMessage(channelId: string, _content: string, options: Record<string, unknown>) {
         calls.push({ op: 'send', channelId, options });
+        // As the adapter reports a reply by id whose target is gone (#58).
+        if (gone && !options.requireReplyTarget) return { messageId: '300000000000000001', replyTargetMissing: true };
         return { messageId: '300000000000000001' };
       },
       // #63's send receipt reads the cached channel for its label; none is cached here.
@@ -444,6 +446,19 @@ describe('reply and reaction tools', () => {
     const sent = 'the message Ra just sent, which is long enough that the receipt only echoes a short part of it to the resident';
     assert.equal(receipt.target.excerpt, `${sent.slice(0, 79)}…`, '80 characters, the ellipsis included');
     assert.match(receipt.target.selectedBy, /not a claim about what you have seen/);
+  });
+
+  it('says a reply by id went unthreaded when its target was gone', async () => {
+    const f = serverFixture();
+    const threaded = JSON.parse((await f.call('reply_message', { messageId: '200000000000000099', content: 'x' })).content[0].text);
+    assert.equal(threaded.unthreaded, undefined);
+    f.deleteTarget();
+    const res = await f.call('reply_message', { messageId: '200000000000000099', content: 'still posted' });
+    assert.ok(!res.isError, res.content[0].text);
+    const receipt = JSON.parse(res.content[0].text);
+    assert.equal(receipt.messageId, '300000000000000001');
+    assert.equal(receipt.discordChannelId, '1234567890123456789');
+    assert.match(receipt.unthreaded, /^Message 200000000000000099 wasn't found .*posted as a plain message, not a reply\.$/);
   });
 
   it('acts on the message chosen at selection, even if newer traffic arrives before the action', async () => {

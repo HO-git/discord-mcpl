@@ -2,7 +2,9 @@
  * sendMessage with a reply target: if the target no longer exists, Discord
  * should send the message unthreaded rather than reject the whole send
  * ("Unknown message"). discord.js expresses that as
- * `reply.failIfNotExists: false`, sent as `fail_if_not_exists`.
+ * `reply.failIfNotExists: false`, sent as `fail_if_not_exists`. Discord then
+ * returns the message without a `message_reference`, and the result says the
+ * reply target was missing.
  */
 
 import { describe, it, type TestContext } from 'node:test';
@@ -47,26 +49,36 @@ function adapterFixture(t: TestContext) {
 const reference = (body: Record<string, unknown>) => body.message_reference as Record<string, unknown> | undefined;
 
 describe('sendMessage reply target', () => {
-  it('asks Discord not to fail the send when the reply target is missing', async (t) => {
+  it('asks Discord not to fail the send when the reply target is missing, and says it was missing', async (t) => {
     const { adapter, bodies } = adapterFixture(t);
-    await adapter.sendMessage('dm1', 'hello there', { replyTo: GONE });
+    const result = await adapter.sendMessage('dm1', 'hello there', { replyTo: GONE });
     assert.equal(bodies.length, 1);
     assert.equal(reference(bodies[0]!)!.message_id, GONE);
     assert.equal(reference(bodies[0]!)!.fail_if_not_exists, false);
+    assert.equal(result.replyTargetMissing, true);
+  });
+
+  it('does not report a missing target when the reply threaded', async (t) => {
+    const { adapter, bodies } = adapterFixture(t);
+    const result = await adapter.sendMessage('dm1', 'hello there', { replyTo: '1200000000000000001' });
+    assert.equal(reference(bodies[0]!)!.fail_if_not_exists, false);
+    assert.deepEqual(result, { messageId: '1300000000000000101' });
   });
 
   it('only the first chunk of a long message is a reply', async (t) => {
     const { adapter, bodies } = adapterFixture(t);
-    await adapter.sendMessage('dm1', 'word '.repeat(900), { replyTo: '1200000000000000001' });
+    const result = await adapter.sendMessage('dm1', 'word '.repeat(900), { replyTo: '1200000000000000001' });
     assert.ok(bodies.length > 1, 'message was split');
     assert.equal(reference(bodies[0]!)!.message_id, '1200000000000000001');
     assert.equal(reference(bodies[0]!)!.fail_if_not_exists, false);
     for (const later of bodies.slice(1)) assert.equal(reference(later), undefined);
+    assert.equal(result.replyTargetMissing, undefined, 'later chunks carry no reference by design');
   });
 
   it('sends without a reply when no target is given', async (t) => {
     const { adapter, bodies } = adapterFixture(t);
-    await adapter.sendMessage('dm1', 'hello there');
+    const result = await adapter.sendMessage('dm1', 'hello there');
     assert.equal(reference(bodies[0]!), undefined);
+    assert.equal(result.replyTargetMissing, undefined);
   });
 });

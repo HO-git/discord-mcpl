@@ -1154,7 +1154,7 @@ export class DiscordAdapter {
     channelId: string,
     content: string,
     options?: { replyTo?: string; files?: OutgoingFile[]; requireReplyTarget?: boolean },
-  ): Promise<{ messageId: string }> {
+  ): Promise<{ messageId: string; replyTargetMissing?: true }> {
     const channel = await this.channelById(channelId);
     if (!channel) throw channelUnusable(channelId, 'nothing was sent');
     if (!('send' in channel)) throw noMessagesHere(channel, channelId, 'nothing was sent');
@@ -1164,6 +1164,7 @@ export class DiscordAdapter {
     // Files-only message (no text): still send one message carrying the files.
     if (chunks.length === 0 && attachments.length > 0) chunks.push('');
     let lastId = '';
+    let replyTargetMissing: true | undefined;
     for (let i = 0; i < chunks.length; i++) {
       // Attach files to the LAST chunk so they render after the full text.
       const isLast = i === chunks.length - 1;
@@ -1182,8 +1183,10 @@ export class DiscordAdapter {
         files: isLast && attachments.length > 0 ? attachments : undefined,
       });
       lastId = sent.id;
+      // Discord drops the reference when it posts a reply unthreaded.
+      if (i === 0 && options?.replyTo && !sent.reference) replyTargetMissing = true;
     }
-    return { messageId: lastId };
+    return replyTargetMissing ? { messageId: lastId, replyTargetMissing } : { messageId: lastId };
   }
 
   /** Resolve a DM recipient that may be a numeric user ID **or** a

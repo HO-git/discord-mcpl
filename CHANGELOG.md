@@ -388,7 +388,8 @@ in the git log and PR descriptions.
 - **A reply whose target is gone still posts** (#58). `reply_message` by
   `messageId` used to fail the whole send with "Unknown message" when that
   message had been deleted or the id was wrong; it now posts the content as a
-  plain message. A `latestFrom` reply still fails, as above.
+  plain message, and the result's `unthreaded` says the reply target wasn't
+  found. A `latestFrom` reply still fails, as above.
 - **A refused DM's sender can be told** (issue #60). Once the agent turns
   notices on (`filters_update {setDmNotice: true}`; they're off by default, so
   upgrading starts no messages to anyone), when the DM whitelist refuses a DM,
