@@ -32,6 +32,7 @@ import {
 import { existsSync, statSync } from 'node:fs';
 import { basename } from 'node:path';
 import { dbg } from './debug-log.js';
+import { mcplChannelId } from './channels.js';
 
 import {
   buildCandidates,
@@ -177,7 +178,9 @@ export interface DiscordChannelInfo {
    *  accepts. Returned so listings hand back something PASTEABLE: the
    *  not-found error tells agents to "use list_channels to see what is
    *  addressable", which was only true once this field existed. Both forms are
-   *  present on purpose — label to compose a send now, id to store. */
+   *  present on purpose — label to compose a send now, id to store.
+   *  Threads are the exception: names do not address them, so their label is
+   *  the `discord:<guildId>:<threadId>` composite, which does. */
   label: string;
 }
 
@@ -1380,6 +1383,12 @@ export class DiscordAdapter {
     // Active threads are not part of guild.channels.fetch(), so without this
     // an agent can't discover ongoing thread conversations. Same visibility
     // filter as channels (a thread under an allowed parent is allowed).
+    //
+    // A thread's label is its `discord:<guild>:<thread>` composite, not
+    // `#name (Guild)`: name resolution excludes threads (see
+    // resolveChannelRef), so a name label would be unresolvable — or, when a
+    // channel shares the thread's name, resolve to THAT channel and deliver
+    // there. The composite always resolves to the thread itself.
     try {
       const listed = new Set(result.map((c) => c.id));
       const active = await guild.channels.fetchActiveThreads();
@@ -1390,7 +1399,7 @@ export class DiscordAdapter {
           name: t.name,
           type: mapChannelType(t.type),
           parentId: t.parentId ?? undefined,
-          label: formatChannelLabel(t.name, guild.name),
+          label: mcplChannelId(guildId, t.id),
         });
       });
     } catch (err) {

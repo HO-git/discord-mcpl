@@ -24,6 +24,11 @@ function makeAdapter(opts: {
     id: 'g1',
     name: 'Test Guild',
     channels: {
+      // discord.js's live cache holds threads too; resolveChannelRef reads it.
+      cache: new Map<string, unknown>([
+        ...opts.channels.map((c) => [c.id, c] as const),
+        ...(opts.threads instanceof Error ? [] : opts.threads.map((t) => [t.id, t] as const)),
+      ]),
       fetch: async () => new Map(opts.channels.map((c) => [c.id, c])),
       fetchActiveThreads: async () => {
         if (opts.threads instanceof Error) throw opts.threads;
@@ -33,7 +38,7 @@ function makeAdapter(opts: {
   };
   internals.client = {
     destroy() {},
-    guilds: { fetch: async () => guild },
+    guilds: { fetch: async () => guild, cache: new Map([[guild.id, guild]]) },
     user: { id: 'bot_1', username: 'bot', displayName: 'Bot', bot: true },
   } as never;
   return adapter;
@@ -50,7 +55,29 @@ describe('listChannels: active threads', () => {
     const t = listed.find((c) => c.id === 't1')!;
     assert.equal(t.type, 'thread');
     assert.equal(t.parentId, 'c1');
-    assert.equal(t.label, listed.find((c) => c.id === 'c1')!.label.replace('general', 'planning'));
+    assert.equal(t.label, 'discord:g1:t1');
+  });
+
+  // A name-based label (`#planning (Test Guild)`) would be unresolvable for a
+  // thread — the resolver excludes threads — or, worse, resolve to a regular
+  // channel of the same name and send there. The listed address must reach
+  // the thread itself.
+  it("gives threads an address that resolves to the thread, not a same-named channel", async () => {
+    const adapter = makeAdapter({
+      channels: [channel('c1', 'general'), channel('c2', 'planning')],
+      threads: [thread('t1', 'planning', 'c1')],
+    });
+    const listed = await adapter.listChannels('g1');
+    const t = listed.find((c) => c.id === 't1')!;
+    const resolved = adapter.resolveChannelRef(t.label);
+    assert.ok(resolved.ok, `thread label ${t.label} did not resolve`);
+    assert.equal(resolved.id, 't1');
+
+    // Every listed label round-trips to its own entry.
+    for (const c of listed) {
+      const r = adapter.resolveChannelRef(c.label);
+      assert.ok(r.ok && r.id === c.id, `${c.label} should resolve to ${c.id}`);
+    }
   });
 
   it('applies the channel filter to threads through their parent', async () => {
