@@ -52,7 +52,7 @@ in the git log and PR descriptions.
   thread whose channel isn't known, such as one known only from a message,
   or a stale one: the server's stale threads are fetched first, as its
   channels are, and a thread its server came back without waits until
-  Discord reports it again.
+  Discord reports it again or a read of it fetches it.
 - **An attachment's URL says when it stops working.** Discord signs each CDN
   URL with the time it stops working, in the URL's `ex` parameter. An
   attachment marker whose URL has one now follows it with `(link expires
@@ -159,7 +159,8 @@ in the git log and PR descriptions.
     overtaken, the channel becomes stale and the tool reports the name it
     made it with, and if Discord says it's gone already the tool says so. A
     stale channel's facts decide no registration or name until a fresh fetch
-    or an update clears its mark, or, for a thread, a sync that lists it.
+    or an update clears its mark, or, for a thread, a sync that lists it or
+    a report that the bot was added to it.
     Meanwhile a delivery from a stale channel, or from a thread in it,
     carries no name for that channel in its fields, and its label is the
     registered one: a stale channel's or thread's is its id, while a
@@ -197,9 +198,9 @@ in the git log and PR descriptions.
     a server in an outage rather than listing what it held before: before
     fetching anything for it, and
     again after, since an outage can begin while its stale channels are
-    fetched. Otherwise it fetches that server's stale channels first, and
-    leaves out one still stale, whether its fetch failed or every try was
-    overtaken.
+    fetched. Otherwise it fetches that server's stale channels and threads
+    first, and leaves out one still stale, whether its fetch failed or every
+    try was overtaken.
   - **A reaction in a server the guild filter leaves out is dropped,** as
     its messages are. It used to pass when the server had no channel
     filter of its own.

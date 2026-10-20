@@ -25,6 +25,7 @@ const require = createRequire(import.meta.url);
 const discordJs = dirname(require.resolve('discord.js'));
 const guildCreate = require(resolve(discordJs, 'client/websocket/handlers/GUILD_CREATE.js'));
 const threadUpdate = require(resolve(discordJs, 'client/websocket/handlers/THREAD_UPDATE.js'));
+const threadCreate = require(resolve(discordJs, 'client/websocket/handlers/THREAD_CREATE.js'));
 
 const G = '100000000000000001';
 const P = '100000000000000002';
@@ -125,6 +126,23 @@ it('list_channels fetches a stale thread first, and lists it as Discord has it n
   assert.equal(listed.find((c) => c.id === TH)?.name, 'renamed');
 });
 
+it('a name lookup, which reads every guild, fetches no stale thread: names don\'t address threads', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
+  (f.adapter as any).markStale(TH, G);
+  await f.adapter.refreshStale();
+  assert.equal(f.get.mock.callCount(), 0);
+  assert.equal(f.adapter.isStale(TH), true);
+});
+
+it('list_channels leaves out a thread whose channel is still stale, with that channel', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
+  (f.adapter as any).markStale(P, G);
+  const ids = (await f.adapter.listChannels(G)).map((c) => c.id);
+  assert.equal(f.get.mock.callCount(), 1, 'P was fetched first');
+  assert.equal(f.adapter.isStale(P), true, "P's fetch failed");
+  assert.deepEqual(ids, [Q]);
+});
+
 it("list_channels admits a thread through its channel's category, as the channel filter does", async (t) => {
   const CAT = '100000000000000009';
   const R = '100000000000000010';
@@ -180,6 +198,25 @@ it('list_channels lists a thread its guild came back without once Discord report
   // applies to the thread it kept without putting it back in the guild's cache.
   dispatch(f.client, 'THREAD_UPDATE', threadUpdate, { d: threadData(TH, 'topic', P) });
   assert.ok(!f.client.guilds.cache.get(G).channels.cache.has(TH));
+  assert.deepEqual((await f.adapter.listChannels(G)).map((c) => c.id).sort(), [P, Q, TH].sort());
+});
+
+it('list_channels lists a thread its guild came back without once the bot is added to it again', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
+  // The guild comes back without TH, which the bot had lost meanwhile, as it
+  // does a private thread it's removed from.
+  f.client.actions.GuildDelete.handle({ id: G, unavailable: true });
+  dispatch(f.client, 'GUILD_CREATE', guildCreate, {
+    d: {
+      id: G, name: 'Guild', unavailable: false, owner_id: BOT, member_count: 1, members: [{ user: bot, roles: [] }],
+      channels: [channelData(P, 'general'), channelData(Q, 'planning')], threads: [],
+    },
+  });
+  assert.equal(f.adapter.isStale(TH), true);
+  // Adding the bot back reaches the client as a THREAD_CREATE, which
+  // discord.js applies to the thread it kept, with no threadCreate event.
+  dispatch(f.client, 'THREAD_CREATE', threadCreate, { d: threadData(TH, 'topic', P) });
+  assert.equal(f.adapter.isStale(TH), false, 'a report of the thread clears its mark');
   assert.deepEqual((await f.adapter.listChannels(G)).map((c) => c.id).sort(), [P, Q, TH].sort());
 });
 

@@ -1066,15 +1066,17 @@ export class DiscordAdapter {
    *  across channels reads, before it: resolving a channel by name, or
    *  listing channels. Those are the channels a server lists now. A channel
    *  or thread its server no longer lists, such as one a return left out,
-   *  holds no name there (uncertainGuildNames); a message from one of
-   *  those, or a tool's read of it, fetches it first. A fresh fetch clears
-   *  a mark and registers the channel again (onChannelRefreshed); while one
-   *  stays stale, its guild's names don't resolve and it's left out of
-   *  listing. A failed fetch, or one overtaken on every try, leaves its
-   *  mark. Given a guild, as a listing of it is, only that guild's stale
-   *  channels are fetched, its threads among them, since a listing lists
-   *  threads. A name, given without a guild, reads every guild's, threads
-   *  aside, since a thread's facts give no name. */
+   *  holds no name there (uncertainGuildNames); a message from one of those,
+   *  or a tool's read of it, fetches it first. A fresh fetch clears a mark
+   *  and tells the server (onChannelRefreshed), which registers a channel
+   *  again and re-derives a thread it has registered. While a channel of
+   *  a kind a name addresses stays stale, its guild's names don't resolve,
+   *  and any stale channel or thread is left out of listing. A failed fetch,
+   *  or one overtaken on every try, leaves its mark. Given a guild, as a
+   *  listing of it is, only that guild's stale channels are fetched, its
+   *  threads among them, since a listing lists threads. A name, given without
+   *  a guild, reads every guild's, threads aside, since a thread's facts give
+   *  no name. */
   async refreshStale(guildId?: string): Promise<void> {
     const listed = [...this.stale].filter(([id, mark]) => {
       if (guildId !== undefined && mark.guildId !== guildId) return false;
@@ -1891,27 +1893,27 @@ export class DiscordAdapter {
   }
 
   /** A guild's channels as the gateway keeps them: GUILD_CREATE lists every
-   *  channel and updates follow, so the guild's own cache is whole while the
-   *  guild is available, and reading it writes nothing to the cache that a
-   *  REST reply could make older (refetchChannel). Categories and forums are
-   *  listed. Active threads are listed too, labelled by id since names don't
-   *  address them; archived ones aren't. Threads are read from the client's
-   *  cache, not the guild's: a thread a guild's return left out
+   *  channel and updates follow, so the guild's own cache holds every channel
+   *  while the guild is available, and reading it writes nothing to the cache
+   *  that a REST reply could make older (refetchChannel). Categories and
+   *  forums are listed. Active threads are listed too, labelled by id since
+   *  names don't address them; archived ones aren't. Threads are read from
+   *  the client's cache, not the guild's: a thread a guild's return left out
    *  (markUnlisted) stays out of the guild's cache when Discord later reports
    *  it active again, as an unarchive's threadUpdate does, so its stale mark,
    *  which that report clears, decides instead. A thread is listed only under
-   *  a channel the guild's cache holds: one known only from a message has no
-   *  channel yet (threadChannelUnknown), and one its channel's deletion left
-   *  in the cache, outside that channel's threads, has none any more. A
-   *  guild in an outage is refused rather than listed from what it held
-   *  before, before anything is fetched for it, and again after, since an
-   *  outage can begin meanwhile. A stale channel or thread the guild's cache
-   *  holds is fetched first (refreshStale), through the freshness rule, as
-   *  for a name, so it's listed as Discord has it now. One still stale is
-   *  left out, as the registration listings leave it out
-   *  (guildPostingChannels), since its category and name may be older than
-   *  Discord's, and so is a thread a return left out, until a report or a
-   *  fetch of it clears its mark. */
+   *  a channel the guild's cache holds and that isn't stale: one known only
+   *  from a message has no channel yet (threadChannelUnknown), one its
+   *  channel's deletion left in the cache, outside that channel's threads,
+   *  has none any more, and a stale channel is left out itself. A guild in an
+   *  outage is refused rather than listed from what it held before, before
+   *  anything is fetched for it, and again after, since an outage can begin
+   *  meanwhile. A stale channel or thread the guild's cache holds is fetched
+   *  first (refreshStale), through the freshness rule, as for a name, so it's
+   *  listed as Discord has it now. One still stale is left out, as the
+   *  registration listings leave it out (guildPostingChannels), since its
+   *  category and name may be older than Discord's, and so is a thread a
+   *  return left out, until a report or a fetch of it clears its mark. */
   async listChannels(guildId: string): Promise<DiscordChannelInfo[]> {
     const guild = await this.client.guilds.fetch(guildId);
     if (!guild?.channels) {
@@ -1940,8 +1942,9 @@ export class DiscordAdapter {
     this.client.channels.cache.forEach((c) => {
       if (!c.isThread() || c.guildId !== guildId) return;
       if (this.isStale(c.id)) return;
-      // Only under a channel the guild's cache holds (see above).
-      if (c.parentId === null || !guild.channels.cache.has(c.parentId)) return;
+      // Only under a channel the guild's cache holds and that isn't stale
+      // (see above).
+      if (c.parentId === null || !guild.channels.cache.has(c.parentId) || this.isStale(c.parentId)) return;
       if (!this.channelAllowed(guildId, c.id, c.parentId)) return;
       // An archived thread lingers in the cache but isn't an ongoing
       // conversation; it's left out.
@@ -2867,6 +2870,18 @@ export class DiscordAdapter {
       if (facts) this.threadUpdateHandler?.(facts);
     });
 
+    // Discord sends a thread's creation report when the bot is added to a
+    // thread, not only when it's made, with the thread as Discord has it now.
+    // For a thread the client already holds, discord.js applies it right
+    // after this, in the same tick once the client is ready, and emits no
+    // threadCreate. It's a report of the thread, so it clears the thread's
+    // mark, as a threadUpdate does. Unlike a threadUpdate, it isn't passed to
+    // the server, which would read the facts from before the patch, so a
+    // registered thread keeps what was derived of it until its next report.
+    this.client.ws.on(GatewayDispatchEvents.ThreadCreate, (data: { id?: unknown }) => {
+      if (typeof data?.id === 'string') this.stale.delete(data.id);
+    });
+
     this.client.on('threadDelete', (thread) => {
       this.stale.delete(thread.id);
       if (thread.guildId) this.threadDeleteHandler?.(thread.guildId, thread.id);
@@ -3302,9 +3317,10 @@ export class DiscordAdapter {
    *  was joined again, without listing it (markUnlisted), or its fetch kept
    *  landing after newer reports (refetchChannel). A message, edit or
    *  deletion from it, and a read of its meta, fetch it again first
-   *  (lookUpChannel, getChannelMeta). It stays stale until an update of it
-   *  or a fetch nothing overtook. Its deletion, or its guild being left,
-   *  drops the mark. */
+   *  (lookUpChannel, getChannelMeta). It stays stale until an update of it,
+   *  for a thread a creation report of it (sent when the bot is added to it)
+   *  or a sync that lists it, or a fetch nothing overtook. Its deletion, or
+   *  its guild being left, drops the mark. */
   isStale(channelId: string): boolean {
     return this.stale.has(channelId);
   }
