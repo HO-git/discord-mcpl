@@ -232,7 +232,7 @@ it('a voice channel whose name a same-named text channel holds is labelled by it
   assert.ok(f.announced('updated', idOf(B)));
 });
 
-it("list_channels labels each channel as a registered channel's label is made", async (t) => {
+it("list_channels labels each channel as a registered channel's label is made, and a thread by its id", async (t) => {
   const A = '100000000000000011';
   const B = '100000000000000012';
   const CAT = '100000000000000014';
@@ -247,6 +247,7 @@ it("list_channels labels each channel as a registered channel's label is made", 
   assert.equal(label(A), '#general (Guild)');
   assert.equal(label(B), idOf(B), "the voice channel's name reaches the text channel");
   assert.equal(label(CAT), idOf(CAT), 'a category has no name route');
+  assert.equal(label(TH), threadMcplId, 'a thread by its id, which a name never reaches');
 });
 
 it("a channel created with a registered channel's name takes it, and two of one kind both go by id", (t) => {
