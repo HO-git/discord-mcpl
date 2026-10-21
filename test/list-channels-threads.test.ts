@@ -101,6 +101,19 @@ it('list_channels leaves out an archived thread', async (t) => {
   assert.ok(!ids.includes(TQ));
 });
 
+it("list_channels lists a forum's active posts as threads with the forum as their parent, as a forum's error says", async (t) => {
+  const FORUM = '100000000000000009';
+  const forum = { id: FORUM, guild_id: G, type: ChannelType.GuildForum, name: 'ideas', parent_id: null };
+  const post = { ...threadData(TH, 'a post', FORUM), type: ChannelType.PublicThread };
+  const f = fixture(t, { channels: [forum], threads: [post] });
+  const listed = await f.adapter.listChannels(G);
+  assert.equal(listed.find((c) => c.id === FORUM)?.type, 'forum');
+  const listedPost = listed.find((c) => c.id === TH);
+  assert.equal(listedPost?.type, 'thread');
+  assert.equal(listedPost?.parentId, FORUM);
+  assert.equal(listedPost?.label, idOf(TH));
+});
+
 it('list_channels admits a thread through its parent, as the channel filter does', async (t) => {
   const f = fixture(t, { threads: [threadData(TH, 'allowed', P), threadData(TQ, 'hidden', Q)], guildChannels: [P] });
   const ids = (await f.adapter.listChannels(G)).map((c) => c.id);

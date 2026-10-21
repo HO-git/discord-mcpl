@@ -5,6 +5,44 @@ in the git log and PR descriptions.
 
 ## Unreleased
 
+### Added
+
+- **`list_channels` lists a server's active threads** (#59), each with its
+  type, its channel as `parentId`, and its id, `discord:<guild>:<thread>`,
+  as its label, since names don't address threads. The channel filters
+  admit a thread as they admit its messages: by its own id, its channel's,
+  or its channel's category. Archived threads aren't listed, and nor is a
+  thread whose channel isn't known, such as one known only from a message,
+  or a stale one: the server's stale threads are fetched first, as its
+  channels are, and a thread its server came back without waits until
+  Discord reports it again or a read of it fetches it. A forum's active
+  posts are listed as threads with the forum as their `parentId`. The
+  tool's description now says it lists threads.
+
+### Changed
+
+- **Two error texts that said threads aren't listed now point to
+  `list_channels` for them** (#59). Anything matching the old texts,
+  quoted here, needs the new ones:
+  - A MISSING_ACCESS error for a channel said that, for a server channel,
+    `list_channels` shows the channels the bot can see there "within the
+    configured filters; threads and DMs aren't listed". It now says it
+    shows them "and their active threads, within the configured filters;
+    DMs aren't listed."
+  - A forum's or a media channel's error said "Its posts are threads, and
+    no tool here lists them, so a post's id comes only from a message
+    posted in it or a link to it." It now says that the active posts the
+    channel filters allow are the threads `list_channels` for its server
+    shows with that channel as their parent, and that an archived post's
+    id comes only from a message posted in it or a link to it.
+- **A report that the bot was added to a thread clears the thread's stale
+  mark** (#59), as a fresh fetch, an update, or a sync that lists it
+  already did. Discord sends one when the bot is added to a thread, such
+  as a private thread it was removed from while away, and discord.js
+  applies it to the thread it already holds without an event of its own,
+  so the mark stayed, and a thread its server had come back without stayed
+  out of `list_channels` after the bot was added back.
+
 ## 0.3.0 — 2026-10-18
 
 ### Upgrade notes
@@ -46,15 +84,6 @@ in the git log and PR descriptions.
 
 ### Added
 
-- **`list_channels` lists a server's active threads** (#59), each with its
-  type, its channel as `parentId`, and its id, `discord:<guild>:<thread>`,
-  as its label, since names don't address threads. The channel filters
-  admit a thread as they admit its messages: by its own id, its channel's,
-  or its channel's category. Archived threads aren't listed, and nor is a
-  thread whose channel isn't known, such as one known only from a message,
-  or a stale one: the server's stale threads are fetched first, as its
-  channels are, and a thread its server came back without waits until
-  Discord reports it again or a read of it fetches it.
 - **An attachment's URL says when it stops working.** Discord signs each CDN
   URL with the time it stops working, in the URL's `ex` parameter. An
   attachment marker whose URL has one now follows it with `(link expires
@@ -378,8 +407,7 @@ in the git log and PR descriptions.
     overtaken, the channel becomes stale and the tool reports the name it
     made it with, and if Discord says it's gone already the tool says so. A
     stale channel's facts decide no registration or name until a fresh fetch
-    or an update clears its mark, or, for a thread, a sync that lists it or
-    a report that the bot was added to it.
+    or an update clears its mark, or, for a thread, a sync that lists it.
     Meanwhile a delivery from a stale channel, or from a thread in it,
     carries no name for that channel in its fields, and its label is the
     registered one: a stale channel's or thread's is its id, while a
@@ -396,10 +424,9 @@ in the git log and PR descriptions.
     registration listings leave a stale channel out. Before a name-addressed
     tool resolves a name, and before `refresh_channels` lists, the stale
     channels their servers still list are fetched again, threads aside, in
-    every server; `list_channels` fetches those of the server it lists, its
-    threads among them. A delivery from a thread fetches its stale channel
-    first. If that lookup fails, the filters decide the delivery on what the
-    cache holds. A channel
+    every server; `list_channels` fetches those of the server it lists. A
+    delivery from a thread fetches its stale channel first. If that lookup
+    fails, the filters decide the delivery on what the cache holds. A channel
     that Discord moves out of what the channel filters admit is forgotten,
     with the threads admitted through it, as on a server's return, and a
     delivery on its way from it doesn't register it again. Editing the
@@ -413,13 +440,12 @@ in the git log and PR descriptions.
   - **`list_channels` reads a server's channels from the gateway's cache**
     instead of fetching them from Discord, so it can't leave older facts in
     the cache than an update brought meanwhile. It lists the same channels as
-    before, and now the server's active threads too (see Added). It refuses
-    a server in an outage rather than listing what it held before: before
-    fetching anything for it, and
+    before, threads still excluded. It refuses a server in an outage rather
+    than listing what it held before: before fetching anything for it, and
     again after, since an outage can begin while its stale channels are
-    fetched. Otherwise it fetches that server's stale channels and threads
-    first, and leaves out one still stale, whether its fetch failed or every
-    try was overtaken.
+    fetched. Otherwise it fetches that server's stale channels first, and
+    leaves out one still stale, whether its fetch failed or every try was
+    overtaken.
   - **A reaction in a server the guild filter leaves out is dropped,** as
     its messages are. It used to pass when the server had no channel
     filter of its own.
@@ -429,8 +455,7 @@ in the git log and PR descriptions.
     thread's is `#parent › thread (Guild)`, or `› thread (Guild)` when its
     channel's name isn't known, display-only either way, since
     `#thread (Guild)` would paste back as a same-named channel; a tool given
-    one refuses it, even where a voice channel has that name. `list_channels`
-    gives a thread its id instead, which a tool accepts. Where a name
+    one refuses it, even where a voice channel has that name. Where a name
     isn't known (a server the client hasn't cached), or wouldn't resolve
     back to the channel, the label is the channel's id,
     `discord:<guild>:<channel>`, never a bare `#name` that another channel
@@ -492,9 +517,8 @@ in the git log and PR descriptions.
   for backscroll. Each now names the channel's kind and says what didn't
   happen, then where its messages are: for a category, the `list_channels`
   call that shows the channels in it; for a forum or a media channel, that
-  its posts are threads, the active ones in the `list_channels` call that
-  shows them with it as their parent, while an archived post's id comes from
-  a message posted in it or a link to it. A directory channel's error says
+  its posts are threads, which no tool lists, so a post's id comes from a
+  message posted in it or a link to it. A directory channel's error says
   that nothing here can read it or send to it, and a kind the adapter
   doesn't name is named by its type number as one this adapter can't read or
   send to, which only an operator updating the adapter can change. A `#name`
