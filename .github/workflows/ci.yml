@@ -38,8 +38,6 @@ jobs:
       - name: Install dependencies (strict lockfile)
         run: npm ci
 
-      # Each dependency's range says its lowest release works, and the lock
-      # can hold a newer one, so this leg installs each range's lowest.
       - name: Install each dependency's lowest release
         if: matrix.deps == 'floors'
         run: |
