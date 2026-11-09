@@ -1069,13 +1069,8 @@ export class DiscordAdapter {
       const isLast = i === chunks.length - 1;
       const sent = await (channel as TextChannel | DMChannel).send({
         content: chunks[i] || undefined,
-        // A reply whose target is gone (deleted, or a stale or mistyped id)
-        // posts unthreaded instead of failing the whole send with "Unknown
-        // message": the content reaching the channel matters more than the
-        // reply line. discord.js would send fail_if_not_exists: true by
-        // default, so each reply states it. requireReplyTarget keeps a reply
-        // whose target the server chose (a latestFrom selection) failing,
-        // since its target was chosen for it rather than named.
+        // discord.js sends fail_if_not_exists from the client's failIfNotExists
+        // option, true by default, so each reply states it.
         reply: i === 0 && options?.replyTo
           ? { messageReference: options.replyTo, failIfNotExists: options.requireReplyTarget === true }
           : undefined,

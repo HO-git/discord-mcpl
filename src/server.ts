@@ -1853,7 +1853,6 @@ export class DiscordMcplServer {
         const shifted = this.markOutboundSend(channelId);
         const receipt = await this.augmentSendResult(result.messageId, channelId, shifted);
         if (result.replyTargetMissing) {
-          // Only an exact messageId gets here: a latestFrom reply fails instead.
           return withMentions({
             ...receipt,
             unthreaded: `Message ${replyTo} wasn't found in this channel (deleted, a wrong id, or in another channel), so this was posted as a plain message, not a reply.`,
