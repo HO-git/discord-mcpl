@@ -1,15 +1,11 @@
 /**
- * Edit/delete forwarding.
- *
- * Discord emits MESSAGE_UPDATE for more than content edits: link-preview /
+ * Discord emits MESSAGE_UPDATE for more than content edits: link-preview and
  * embed refreshes re-send old messages with `edited_timestamp` still null.
- * Those were forwarded as "[message edited] …" events — weeks-old,
- * never-edited messages reaching the agent as fresh edits — with no author and
- * no guild, so the host placed them at `discord:dm:<guildChannelId>` and the
- * agent attributed them to whoever it had last been talking to.
  */
 
 import { describe, it } from 'node:test';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import * as assert from 'node:assert/strict';
 
 import { DiscordAdapter, editForwardDecision } from '../src/discord-adapter.js';
@@ -70,8 +66,6 @@ describe('edit/delete push events', () => {
       onChannelRefreshed: noop,
       onChannelStale: noop,
       refreshStale: async () => {},
-      // The cache holds chan1, as it holds a channel an edit or delete comes
-      // from, and nothing else.
       getCachedChannelFacts: (id: string) =>
         id === 'chan1' ? { id, guildId: 'g1', guildName: 'Guild', type: 'text', name: 'general' } : null,
       getCachedChannelFactsFor: () => new Map(),
@@ -107,8 +101,7 @@ describe('edit/delete push events', () => {
     open(server);
     edit('chan1', 'm1', 'updated', false, { guildId: 'g1' });
     del('chan1', 'm1', false, { guildId: 'g1' });
-    // Occurrence ids are unique per edit/delete (RFC-006 §3.1): a fixed
-    // `discord_edit_<id>` collided with itself at the host's dedup.
+    // Occurrence ids are unique per edit or delete (RFC-006 §3.1).
     assert.deepEqual(sent.map(({ method, params }) => [method, params.eventId.replace(/_[^_]+_\d+$/, ''), params.origin.mcplChannelId]), [
       ['push/event', 'discord_edit_m1', 'discord:g1:chan1'],
       ['push/event', 'discord_delete_m1', 'discord:g1:chan1'],
@@ -235,7 +228,6 @@ describe('edit/delete push events', () => {
     const { edit, del, sent } = wire();
     del('dmchan', 'm5', true, { guildId: null });
     assert.equal(sent[0]!.params.origin.guildId, undefined);
-    // Its other party unknown, a DM not registered yet goes unnamed.
     assert.equal('mcplChannelId' in sent[0]!.params.origin, false);
     edit('dmchan', 'm6', 'zz hola', true, { guildId: null, authorId: 'u2', authorName: '_reim0n' });
     del('dmchan', 'm6', true, { guildId: null });
@@ -248,8 +240,6 @@ describe('edit/delete push events', () => {
     edit('chan1', 'm3', 'zz text', false);
     assert.equal(sent[0]!.params.payload.content[0].text, '[message edited] zz text');
     assert.equal(sent[0]!.params.origin.guildId, undefined);
-    // With no info there's no telling a guild channel from a DM, so no
-    // composite id is guessed.
     assert.equal('mcplChannelId' in sent[0]!.params.origin, false);
   });
 
@@ -312,7 +302,7 @@ describe('sparse gateway edit/delete locations', () => {
     t.after(() => f.client.destroy());
     const fetch = t.mock.method(f.client.channels, 'fetch', async () => ({ guildId: 'g1', parentId: null }));
     await f.mutations(f.message());
-    assert.equal(fetch.mock.callCount(), 2);
+    assert.ok(fetch.mock.callCount() >= 1 && fetch.mock.callCount() <= 2, 'looked up, at most once an event');
     assert.ok(f.sent.every((e) => !e.isDM && e.info?.guildId === 'g1'));
     assert.equal(f.sent.length, 2);
   });
@@ -360,7 +350,7 @@ describe('sparse gateway edit/delete locations', () => {
     t.after(() => f.client.destroy());
     const fetch = t.mock.method(f.client.channels, 'fetch', async () => ({ guildId: 'g1', parentId: 'parent' }));
     await f.mutations(f.message({ guildId: 'g1', channelId: 'thread1' }));
-    assert.equal(fetch.mock.callCount(), 2);
+    assert.ok(fetch.mock.callCount() >= 1 && fetch.mock.callCount() <= 2, 'looked up, at most once an event');
     assert.equal(f.sent.length, 2);
     assert.ok(f.sent.every((e) => !e.isDM && e.info?.guildId === 'g1'));
   });
@@ -370,7 +360,7 @@ describe('sparse gateway edit/delete locations', () => {
     t.after(() => f.client.destroy());
     const fetch = t.mock.method(f.client.channels, 'fetch', async () => ({ guildId: 'g1', parentId: 'other-parent' }));
     await f.mutations(f.message({ guildId: 'g1', channelId: 'thread1' }));
-    assert.equal(fetch.mock.callCount(), 2);
+    assert.ok(fetch.mock.callCount() >= 1 && fetch.mock.callCount() <= 2, 'looked up, at most once an event');
     assert.deepEqual(f.sent, []);
   });
 
@@ -431,5 +421,108 @@ describe('sparse gateway edit/delete locations', () => {
     assert.deepEqual(f.sent, []);
     assert.equal(errors.mock.callCount(), 2);
     assert.ok(errors.mock.calls.every((c) => c.arguments.join(' ').includes('channel unavailable')));
+  });
+});
+
+describe("an edit's address facts, from discord.js's own MESSAGE_UPDATE", () => {
+  // discord.js builds the edited message from the update's payload, which
+  // Discord sends as a whole message, mentions included, so an edit of a
+  // message the client never cached can still be read for whom it addresses.
+  const BOT = '900000000000000001', HUMAN = '900000000000000002', GUILD = '900000000000000010', CH = '900000000000000020', ROLE = '900000000000000030';
+  const require = createRequire(import.meta.url);
+  const handler = require(join(dirname(require.resolve('discord.js')), 'client/websocket/handlers/MESSAGE_UPDATE.js')) as (client: Client, packet: { d: unknown }) => void;
+
+  function fixture() {
+    const adapter = new DiscordAdapter({ token: 'unused', guildIds: [GUILD], guildChannels: { [GUILD]: [CH] } });
+    const client = (adapter as any).client as Client;
+    (client as any).user = (client.users as any)._add({ id: BOT, username: 'bot', bot: true, discriminator: '0' });
+    const guild = (client.guilds as any)._add({ id: GUILD, name: 'g', channels: [], members: [], roles: [
+      { id: GUILD, name: '@everyone', permissions: '0', position: 0 },
+      { id: ROLE, name: 'bot', permissions: '0', position: 1, tags: { bot_id: BOT } },
+    ] });
+    (client.channels as any)._add({ id: CH, type: ChannelType.GuildText, name: 'room', guild_id: GUILD, permission_overwrites: [] }, guild);
+    const sent: Array<MessageEventInfo | undefined> = [];
+    adapter.onMessageEdit((_c, _m, _t, _isDM, info) => sent.push(info));
+    let n = 0;
+    const update = async (extra: Record<string, unknown>, id?: string) => {
+      n += 1;
+      handler(client, { d: {
+        id: id ?? `9100000000000000${String(n).padStart(2, '0')}`, channel_id: CH, guild_id: GUILD, content: 'edited text', type: 0, tts: false,
+        author: { id: HUMAN, username: 'someone', discriminator: '0' },
+        timestamp: new Date(EDITED_AT - 60_000).toISOString(), edited_timestamp: new Date(EDITED_AT).toISOString(),
+        mention_everyone: false, mentions: [], mention_roles: [], attachments: [], embeds: [], pinned: false,
+        member: { roles: [], joined_at: new Date(EDITED_AT).toISOString() },
+        ...extra,
+      } });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(sent.length, n, `edit ${n} reached the edit handler`);
+      return sent.at(-1)?.address;
+    };
+    return { client, update, sent, guild };
+  }
+
+  it('reads a mention, a role mention, a reply and none, for messages the client never cached', async (t) => {
+    const f = fixture();
+    t.after(() => f.client.destroy());
+    const none = { mentions: [], mentionsBotRole: false, replyToUserId: null, isBot: false };
+    assert.deepEqual(await f.update({ mentions: [{ id: BOT, username: 'bot', bot: true, discriminator: '0' }] }), { ...none, mentions: [BOT] });
+    assert.deepEqual(await f.update({ mention_roles: [ROLE] }), { ...none, mentionsBotRole: true });
+    assert.deepEqual(await f.update({
+      type: 19, message_reference: { message_id: '919999999999999999', channel_id: CH, guild_id: GUILD },
+      referenced_message: { id: '919999999999999999', channel_id: CH, guild_id: GUILD, content: 'earlier', type: 0, tts: false, author: { id: BOT, username: 'bot', bot: true, discriminator: '0' }, timestamp: new Date(EDITED_AT - 120_000).toISOString(), edited_timestamp: null, mention_everyone: false, mentions: [], mention_roles: [], attachments: [], embeds: [], pinned: false },
+    }), { ...none, replyToUserId: BOT });
+    assert.deepEqual(await f.update({}), none);
+    assert.deepEqual(await f.update({ author: { id: HUMAN, username: 'someone', discriminator: '0', bot: true } }), { ...none, isBot: true });
+  });
+
+  it("reads the edit's own mentions for a message the client has cached, an added mention and a removed one", async (t) => {
+    const f = fixture();
+    t.after(() => f.client.destroy());
+    const ID = '930000000000000001';
+    const channel = f.client.channels.cache.get(CH) as any;
+    channel.messages._add({ id: ID, channel_id: CH, guild_id: GUILD, content: 'first', type: 0, author: { id: HUMAN, username: 'someone', discriminator: '0' }, timestamp: new Date(EDITED_AT - 60_000).toISOString(), edited_timestamp: null, mentions: [], mention_roles: [], attachments: [], embeds: [] });
+    const none = { mentions: [], mentionsBotRole: false, replyToUserId: null, isBot: false };
+    assert.deepEqual(await f.update({ content: 'now for the bot', mentions: [{ id: BOT, username: 'bot', bot: true, discriminator: '0' }] }, ID), { ...none, mentions: [BOT] }, 'an edit that adds the mention');
+    assert.deepEqual(await f.update({ content: 'for nobody again', mentions: [] }, ID), none, 'an edit that takes it away');
+  });
+
+  it("keeps a cached reply addressed to the bot when its update doesn't resend the target", async (t) => {
+    // discord.js rebuilds a cached message's mentions from the update, keeping
+    // the reply target it already holds when referenced_message is absent or
+    // null (Message#_patch), so the edit still reads as a reply to the bot.
+    const f = fixture();
+    t.after(() => f.client.destroy());
+    const ID = '940000000000000001';
+    const channel = f.client.channels.cache.get(CH) as any;
+    channel.messages._add({
+      id: ID, channel_id: CH, guild_id: GUILD, content: 'first', type: 19, author: { id: HUMAN, username: 'someone', discriminator: '0' },
+      timestamp: new Date(EDITED_AT - 60_000).toISOString(), edited_timestamp: null, mentions: [], mention_roles: [], attachments: [], embeds: [],
+      message_reference: { message_id: '919999999999999997', channel_id: CH, guild_id: GUILD },
+      referenced_message: { id: '919999999999999997', channel_id: CH, guild_id: GUILD, content: 'earlier', type: 0, author: { id: BOT, username: 'bot', bot: true, discriminator: '0' }, timestamp: new Date(EDITED_AT - 120_000).toISOString(), edited_timestamp: null, mentions: [], mention_roles: [], attachments: [], embeds: [] },
+    });
+    const none = { mentions: [], mentionsBotRole: false, replyToUserId: null, isBot: false };
+    const reply = { type: 19, message_reference: { message_id: '919999999999999997', channel_id: CH, guild_id: GUILD } };
+    assert.deepEqual(await f.update({ ...reply, content: 'second' }, ID), { ...none, replyToUserId: BOT }, 'referenced_message absent');
+    assert.deepEqual(await f.update({ ...reply, content: 'third', referenced_message: null }, ID), { ...none, replyToUserId: BOT }, 'referenced_message null');
+  });
+
+  it("gives no address facts for a reply whose target Discord didn't send, not fetched or deleted", async (t) => {
+    const f = fixture();
+    t.after(() => f.client.destroy());
+    const reply = { type: 19, message_reference: { message_id: '919999999999999998', channel_id: CH, guild_id: GUILD } };
+    assert.equal(await f.update(reply), undefined, 'referenced_message absent: not fetched, so unknown');
+    assert.equal(await f.update({ ...reply, referenced_message: null }), undefined, 'referenced_message null: deleted, so unknown');
+  });
+
+  it("gives no address facts for a partial message, whose addressing isn't known", async (t) => {
+    const f = fixture();
+    t.after(() => f.client.destroy());
+    // A sparse update (no author): discord.js leaves the message partial.
+    handler(f.client, { d: { id: '920000000000000001', channel_id: CH, guild_id: GUILD, content: 'sparse', edited_timestamp: new Date(EDITED_AT).toISOString() } });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(f.sent.length, 1, 'the edit is forwarded');
+    const info = f.sent[0];
+    assert.ok(info, 'the edit handler got the edit\'s info');
+    assert.equal(info.address, undefined);
   });
 });

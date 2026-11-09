@@ -6,15 +6,18 @@ In the Connectome stack, [connectome-host](https://github.com/anima-research/con
 
 ## What it does
 
-- **Channels.** discord-mcpl registers Discord channels with its host as MCPL [channels](https://github.com/anima-research/mcpl/blob/main/SPEC.md#14-channels-of-communication), with IDs of the form `discord:<guildId>:<channelId>`, or `discord:dm:<channelId>` for a DM. (A guild is what Discord's API calls a server.) The host opens and closes channels, and discord-mcpl delivers the messages posted in an open channel as they arrive.
-- **Messages addressed to the bot.** discord-mcpl also delivers a message that mentions the bot or its own role, replies to one of the bot's messages, or comes as a DM, whether or not its channel is open, as long as the filters admit it and the agent hasn't muted that channel. Messages delivered as they arrive carry MCPL [event tags](https://github.com/anima-research/mcpl/blob/main/SPEC.md#16-event-tags), such as `chat:mention`, `chat:reply`, `chat:dm`, `chat:ambient` and `chat:from-bot`, which the host's wake policy can match.
-- **Edits, deletions and reactions.** discord-mcpl delivers edits and deletions from DMs and open channels, and reactions from server channels where reaction visibility is on. Opening a channel turns its reaction visibility on and closing it turns it off, and the agent can also set it with `set_reaction_visibility`. discord-mcpl doesn't request Discord's DM reaction events, so reactions in DMs never arrive.
+- **Channels.** discord-mcpl registers Discord channels with its host as MCPL [channels](https://github.com/anima-research/mcpl/blob/main/SPEC.md#14-channels-of-communication), with IDs of the form `discord:<guildId>:<channelId>`, or `discord:dm:<channelId>` for a DM. (A guild is what Discord's API calls a server.) The host opens and closes channels, and discord-mcpl delivers the messages posted in an open channel as they arrive, unless the agent has muted it.
+- **Messages addressed to the bot.** discord-mcpl also delivers a message that mentions the bot or its own role, replies to one of the bot's messages, or comes as a DM, whether or not its channel is open, as long as the filters admit it and the agent hasn't muted that channel. Messages delivered as they arrive carry MCPL [event tags](https://github.com/anima-research/mcpl/blob/main/SPEC.md#16-event-tags), such as `chat:mention`, `chat:reply`, `chat:dm`, `chat:ambient` and `chat:from-bot`, which the host's wake policy can match. An edit carries the same address tags beside `chat:edited`, read from the message as edited, unless its addressing isn't known: an edit of a message discord.js holds only in part, or of a reply whose target Discord didn't send, carries none.
+- **Edits, deletions and reactions.** discord-mcpl delivers edits and deletions from DMs and open channels, unless the agent has muted them, and reactions from server channels where reaction visibility is on. Opening a channel the agent hasn't muted turns its reaction visibility on, and closing it turns it off, and the agent can also set it with `set_reaction_visibility`. discord-mcpl doesn't request Discord's DM reaction events, so reactions in DMs never arrive.
 - **Attachments.** Images arrive inline, with still images scaled down to at most 1568 pixels on their longest side. Text files are inlined up to a size limit, 5 KiB by default. Other files, and images too large to inline, arrive as a note with the file's name, size and URL.
-- **Catch-up after downtime.** With `DISCORD_WATERMARK_FILE` set, discord-mcpl saves a catch-up position for each channel it has delivered from, which is the newest message it has delivered or scanned there. After the first host connects, it reads up to `DISCORD_CATCHUP_LIMIT` messages after each saved position and delivers those the current filters admit. In DMs and open channels that's all of them, and in other channels it's each mention of the bot with up to seven messages on either side.
+- **Catch-up after downtime.** With `DISCORD_WATERMARK_FILE` set, discord-mcpl saves a catch-up position for each channel it has delivered from, which is the newest message it has delivered or scanned there. After the first host connects, it reads up to `DISCORD_CATCHUP_LIMIT` messages after each saved position and delivers those the current filters admit. In DMs and open channels that's all of them, and in other channels it's each mention of the bot with up to seven messages on either side. A channel the agent has muted gets none. A message the host didn't take when it was forwarded is kept there too, and delivered later, as Discord has it then, marked as undelivered.
 - **Filters.** Environment variables or a JSON filters file choose which Discord servers, channels and DM senders the agent hears from. Edits to the file take effect within seconds, and with the file configured, the agent can change the server and DM lists with `filters_update`. With no filters set, the agent hears from every server the bot is in and from anyone who DMs it.
-- **Admin commands.** Discord users listed in `DISCORD_ADMIN_USERS` can run four slash commands. Each asks the host to act through a `host/command` request. agent-framework carries it out only for a server whose configuration sets `allowHostCommands: true`, and refuses it otherwise.
-  - `/undo [messages]` removes the last messages from the agent's context (1 by default, at most 50).
-  - `/hide message [to]` removes a message, or the range from it through `to`, from the agent's context. Both take a message link or ID.
+- **Admin commands.** Discord users listed in `DISCORD_ADMIN_USERS` can run five slash commands. Each asks the host to act through a `host/command` request. agent-framework carries it out only for a server whose configuration sets `allowHostCommands: true`, and refuses it otherwise.
+  - `/undo [messages] [marks]` removes the last messages from the agent's context (1 by default, at most 50).
+  - `/hide message [to] [marks]` removes a message, or the range from it through `to`, from the agent's context. Both take a message link or ID.
+  - `marks` on `/undo` chooses which removed messages get a 💤 awareness mark: `none`, the default, `addressed`, those that addressed the agent, or `all`. The host places those marks, so `/undo` needs a host whose agent framework has the `marks` host command (anima-research/agent-framework#250), and is refused on an older host.
+  - `marks` on `/hide` is `none`, the default, or `all`, which adds 💤 to each hidden message. Those marks are discord-mcpl's own, on any host, and outside the host's ledger: `/marks` doesn't list them, and a retract reaches one only on a message the host's ledger also names, when the host's marks are 💤 too.
+  - `/marks action:list [target:<id>] [page:<n>]` shows the host's awareness ledger of the marks it scheduled, `/marks action:cancel target:<id>` stops what it hasn't sent, and `/marks action:retract target:<id>` queues the removal of a batch's marks, or of every mark in the ledger with `target:all`. It needs the same host as `/undo`.
   - `/nudge` runs the agent on its current context, with no new event.
   - `/unstick [max]` rewinds the turns behind a refusal and runs the agent again until the model stops refusing, at most `max` times.
 - **Voice.** Optionally, discord-mcpl joins a voice channel and speaks the agent's replies through ElevenLabs as the host streams them. It waits for silence before it speaks, stops when a person talks over it, and tells the agent what went unheard. It doesn't transcribe speech.
@@ -75,7 +78,7 @@ DISCORD_TOKEN=... npx @animalabs/discord-mcpl --tcp 9040
 From a source checkout, run `node dist/src/index.js` with the same flags. `npm start -- --stdio` runs the TypeScript source through tsx without a build.
 
 - With `--stdio`, a host starts discord-mcpl and talks to it over stdin and stdout. discord-mcpl exits when the host closes the connection.
-- With `--tcp <port>`, discord-mcpl listens on 127.0.0.1 only and serves one host at a time, refusing any other that connects meanwhile. It stays logged in to Discord between hosts but doesn't queue messages for the next host. A message that arrives while no host is connected is dropped, and only a later read of history, such as the catch-up after the first host connects, can bring it back.
+- With `--tcp <port>`, discord-mcpl listens on 127.0.0.1 only and serves one host at a time, refusing any other that connects meanwhile. It stays logged in to Discord between hosts. A message that arrives while no host is connected is dropped, and only a later read of history, such as the catch-up after the first host connects, can bring it back. What was already on its way when a host went is held for the next one, for a minute at most and 64 messages at a time: a message that host answered nothing to, refused without a reason the spec defines, or refused for permission before its start-up had settled is sent again, as the same occurrence, to a host that has finished starting up, advertises event coalescing, and can take that occurrence as it was built (never one sent through a channel the previous host opened); and an edit or delete that was waiting for its message goes to it too (see the CHANGELOG).
 
 discord-mcpl writes its logs to stderr.
 
@@ -133,8 +136,8 @@ These files let state outlive a restart. State whose file has no path stays in m
 
 | Variable | What it holds | When unset |
 |---|---|---|
-| `DISCORD_WATERMARK_FILE` | Each channel's catch-up position (the newest message delivered or scanned there), the DM channels discord-mcpl knows, and the counts `channel_missed` reports. | Kept in memory, with no catch-up. |
-| `DISCORD_SUBSCRIPTIONS_FILE` | Legacy. A JSON array of channel IDs that discord-mcpl delivers messages from as soon as it starts, registering them as initially open. It reads the file once and never writes it. The file's path also sets the default paths of the next two files. | No channels. |
+| `DISCORD_WATERMARK_FILE` | Each channel's catch-up position (the newest message delivered or scanned there), the DM channels discord-mcpl knows, the counts `channel_missed` reports, and the messages the host didn't take, which are delivered later (`owed`, present only while there are some). | Kept in memory, with no catch-up; messages the host didn't take are delivered later only while the process runs. |
+| `DISCORD_SUBSCRIPTIONS_FILE` | Legacy. A JSON array of channel IDs that discord-mcpl delivers messages from as soon as it starts, registering them as initially open, except a channel the agent has muted. It reads the file once and never writes it. The file's path also sets the default paths of the next two files. | No channels. |
 | `DISCORD_MUTED_CHANNELS_FILE` | The channels muted with `mute_channel`. | Beside the subscriptions file (`subs.json` gives `subs.muted.json`), or in memory if that's unset too. |
 | `DISCORD_REACTION_CHANNELS_FILE` | The channels where reaction visibility is on, as of its last save. `set_reaction_visibility`, `mute_channel` and closing a channel save it; opening a channel doesn't. | Beside the subscriptions file (`subs.json` gives `subs.reactions.json`), or in memory if that's unset too. |
 | `DISCORD_DM_NOTICES_FILE` | Whether DM notices are on, and each sender's notice limits, with no message text. Notices stop while the file can't be read or written. | `$XDG_STATE_HOME/discord-mcpl/<bot user ID>/dm-notices.json`, with `~/.local/state` in place of `$XDG_STATE_HOME` when that's unset. |
@@ -154,7 +157,7 @@ discord-mcpl reads the leading digits of `DISCORD_BACKSCROLL_LIMIT` and `DISCORD
 
 | Variable | What it does | When unset |
 |---|---|---|
-| `DISCORD_ADMIN_USERS` | Comma-separated IDs of the users who may run `/undo`, `/hide`, `/nudge` and `/unstick`. | Nobody may. |
+| `DISCORD_ADMIN_USERS` | Comma-separated IDs of the users who may run `/undo`, `/hide`, `/marks`, `/nudge` and `/unstick`. | Nobody may. |
 
 ### Reaction suppression
 
@@ -205,12 +208,20 @@ With it, set `DISCORD_VOICE_NAME=my-agent`.
 
 ```sh
 npm run typecheck
-npm test                              # test/*.test.ts with node --test, through tsx
+npm test                              # test/*.test.ts in one node --test process, through tsx
 npm run build
 node --test dist/test/server.test.js  # the built server
 ```
 
-CI runs these on Ubuntu with Node 22.12.0, 24 and the newest release, and builds on macOS with Node 22.12.0 and the newest release.
+CI runs these on Ubuntu with Node 22.12.0. On macOS with Node 22.12.0 and the newest release, and on Ubuntu with Node 24 and the newest release, it installs, builds, and checks that the built server loads every module it imports at startup and reaches its check for a token, and that its voice modules load.
+
+`npm test` runs every test file in one process (`--experimental-test-isolation=none`, Node 22.8 or later), and expects the server's own `DISCORD_*` variables unset, as CI has them. So a test puts back any process-wide state it changes, such as an environment variable, a global or `console`, and a hook goes inside a `describe`: at a file's top level, a `beforeEach` or `afterEach` runs around every file's tests, and a `before` or `after` once for the whole run. `test/top-level-hooks.test.ts` fails on a line of a `.ts` file in `test/` that starts with any of these:
+- a hook call, by name, by the alias a `node:test` import gives it, or through an object such as `test.before`;
+- an assignment to `process.env`, `console`, `globalThis` or `global`, or to a property written directly on one of them, such as `globalThis.fetch` or `process.env['X']`;
+- a `delete` of any of them, or of anything under them;
+- a `process` listener added with `on`, `once`, `addListener`, `prependListener` or `prependOnceListener`.
+
+It reads only lines that start with one of these plain forms, so it doesn't see one that's indented (inside a top-level block, or in a function called at top level), written after another statement, an assignment through a cast or a longer path (`(globalThis as any).fetch`, `globalThis.process.env.X`), or one made through `Object.assign` or `Object.defineProperty`.
 
 `scripts/voice-smoke.ts` tries voice output in a live voice channel without a host. With `DISCORD_TOKEN`, `ELEVENLABS_API_KEY` and `DISCORD_VOICE_REGISTRY_FILE` set, `npx tsx scripts/voice-smoke.ts --guild <serverId> --vc <voiceChannelId> --voice <registry name>` speaks each line you type, and you can talk over it to see it stop. `--list` prints the servers and channels the bot can see.
 

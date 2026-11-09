@@ -1,18 +1,3 @@
-/**
- * The DM allowlist holds for a DM's edits and deletes as it does for its
- * creates. A refused sender's message never reaches the agent, so neither
- * does its edit or its deletion. A delete is judged by the DM's other party:
- * its author unless the message is the bot's own, else the DM channel's
- * recipient, since an uncached delete names no author. discord.js caches
- * every DM it receives, so without this a refused DM's deletion carried its
- * sender's id and username to the host.
- *
- * The client's channel fetch here behaves as discord.js's does: unforced, it
- * returns the cached DM channel, which may have recorded only the bot; forced,
- * it asks Discord, which names the recipient.
- *
- * Run: node --import tsx --test test/dm-allowlist-mutations.test.ts
- */
 import { describe, it, type TestContext } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -22,7 +7,6 @@ import { ChannelType, type Client } from 'discord.js';
 import { DiscordAdapter } from '../src/discord-adapter.js';
 import { DiscordMcplServer } from '../src/server.js';
 
-/** What Discord says of a DM channel when asked past the cache: its recipient. */
 const askDiscord = async (id: string): Promise<unknown> =>
   ({ id, type: ChannelType.DM, recipientIds: [id.replace(/^dm-/, '')], isDMBased: () => true });
 
@@ -30,7 +14,6 @@ function fixture(t: TestContext, dmUsers?: string[], fetchChannel = askDiscord) 
   const adapter = new DiscordAdapter({ token: 'unused', ...(dmUsers ? { dmUsers } : {}) });
   const client = (adapter as unknown as { client: Client }).client;
   t.after(() => client.destroy());
-  // The bot's own identity, as login would set it.
   (client as unknown as { user: { id: string } }).user = { id: 'the-bot' };
   const fetched: string[] = [];
   const forced: boolean[] = [];
@@ -65,9 +48,11 @@ const dm = (user: string, id: string, cached: boolean) => ({
   channel: cached
     ? { id: `dm-${user}`, type: ChannelType.DM, recipientIds: [user], isDMBased: () => true }
     : { id: `dm-${user}`, type: ChannelType.DM, isDMBased: () => true },
-  author: cached ? { id: user, username: `${user}_name` } : null,
+  author: cached ? { id: user, username: `${user}_name`, bot: false } : null,
   content: cached ? 'words' : null,
   editedTimestamp: 1790000000000,
+  // A whole message, as discord.js gives one, says whom it mentions.
+  ...(cached ? { mentions: { users: [], roles: [], repliedUser: null } } : {}),
 });
 
 describe('the DM allowlist on edits and deletes', () => {
@@ -100,7 +85,6 @@ describe('the DM allowlist on edits and deletes', () => {
   it("withholds a deletion whose party Discord can't confirm, and says so in the operator log", async (t) => {
     const errors = t.mock.method(console, 'error', () => {});
     const lines = () => errors.mock.calls.map((c) => c.arguments.map(String).join(' '));
-    // The fetched channel names no recipient: withheld, as an unknown party.
     const silent = fixture(t, ['friend'], async (id) => ({ id, type: ChannelType.DM, isDMBased: () => true }));
     silent.emit('messageDelete', dm('friend', 'm-nameless', false));
     await silent.settle();
@@ -111,7 +95,6 @@ describe('the DM allowlist on edits and deletes', () => {
       lines().join('\n'),
     );
 
-    // The lookup fails: withheld too, with its cause.
     const failing = fixture(t, ['friend'], async () => { throw new Error('channel lookup failed: 503'); });
     failing.emit('messageDelete', dm('friend', 'm-unlucky', false));
     await failing.settle();
@@ -227,9 +210,10 @@ describe('the DM allowlist and guild channels', () => {
     const inGuild = (id: string) => ({
       id, channelId: 'g-chan', guildId: 'guild-1', partial: false,
       channel: { id: 'g-chan', type: ChannelType.GuildText, guildId: 'guild-1', parentId: null, isDMBased: () => false },
-      author: { id: 'stranger', username: 'stranger_name' },
+      author: { id: 'stranger', username: 'stranger_name', bot: false },
       content: 'changed words',
       editedTimestamp: 1790000000000,
+      mentions: { users: [], roles: [], repliedUser: null },
     });
     emit('messageUpdate', { partial: true }, inGuild('g-edit'));
     emit('messageDelete', inGuild('g-delete'));

@@ -5,6 +5,461 @@ in the git log and PR descriptions.
 
 ## Unreleased
 
+### Changed
+
+- **A reply by `messageId` to a message that's gone now posts** (#58). It
+  used to fail the whole send with "Unknown message". It now posts as a
+  plain message, and the result's `unthreaded` says the target wasn't found.
+  A `latestFrom` reply to a message that's gone still fails, since the
+  server chose its target.
+- **discord-mcpl needs discord.js 14.27.0 or later.** Its range was
+  `^14.16.0`. Below 14.17.0, discord.js ignores the ephemeral flag on a
+  deferred reply, so `/marks` and `/nudge` answer where the whole channel
+  sees them. Below 14.26.4, discord.js drops a message from a thread its
+  cache doesn't hold, so discord-mcpl doesn't receive it as it arrives.
+  Below 14.27.0, discord.js pins an undici release that published security
+  advisories cover; from 14.27.0 it can take a fixed one (6.29.1).
+
+## 0.6.0 — 2026-10-30
+
+### Added
+
+- **`list_channels` gives each channel's topic.** A channel whose topic
+  isn't blank carries it as `topic`, a forum or media channel's guidelines
+  included, cut at 300 code points with an ellipsis. The tool's description
+  doesn't change.
+
+- **A send's result says what each `@name` in it became.** The results of
+  `send_message`, `reply_message` and `send_dm`, and the answer to
+  `channels/publish`, now carry a `mentions` list when the content has an
+  `@name` to report, one entry per name: the user or role it became; or
+  that it went out as plain text and pinged no one, because no cached
+  member or role is named exactly that, with up to three near names; or
+  because several members or roles share the name, listing them, up to
+  ten. Each near name or choice comes with its mention, to copy exactly
+  into a new message. The list shows at most twenty names, and
+  `mentionsNotShown` counts the rest. `@everyone` and `@here` aren't
+  reported, nor is an `@name` that didn't become a mention when it's
+  `@everyone` or `@here` with trailing periods, an explicit `<@id>`,
+  inside a word such as an email address and naming no single member or
+  role, one of the bot's own names, or only periods. Names in the list,
+  usernames included, have the server's own tag openings neutralized and
+  U+0085, U+2028 and U+2029 written as escapes. What's posted doesn't
+  change, and no tool description changes.
+
+### Fixed
+
+- **An `@name` in what the agent sends is read more exactly, so some pings
+  start and some stop.** These now ping:
+  - a name followed by a sentence's periods, such as "thanks @alice.",
+    with the periods kept after the mention;
+  - a name with letters outside ASCII, such as `@José` or `@太郎`, which is
+    now looked up whole, and reported like any other name when it matches
+    no one;
+  - `<@name>` with the name of a member or role, up to 100 characters,
+    spaces included but not `<`, `>`, `@` or a line break, which now posts
+    as that mention alone. A name without a space pinged inside stray
+    brackets before.
+
+  These stop:
+  - an `@name` inside a word that names a member, such as `me@ann_x` in
+    an email address, which pinged a member called ann_x; it's now left as
+    text, and the send's report names that member with their mention to
+    copy;
+  - `@José` pinging a member called Jos, from reading only "Jos";
+  - `<@Alice Smith>` pinging a member called Alice inside stray brackets,
+    from reading only "Alice";
+  - a name followed straight by a letter of another script, such as
+    "@aliceさん", which pinged Alice and is now read as "aliceさん": unless
+    someone is called exactly that, it goes as text, with the send's report
+    giving near names, such as Alice, with their mentions to copy;
+  - `<@digits>` the agent wrote pinging a member nicknamed those digits,
+    inside stray brackets; it now posts as written.
+
+  A long send that has no space or line break to split at no longer
+  splits through a mention or channel link that follows other text in
+  the part being cut: the cut moves to just before it, so it starts the
+  next message. Such a split posted as two halves of plain text, so the
+  mention pinged no one.
+
+- **A mute survives an open of its channel, a host's reconcile open
+  included (#95).** Opening a muted channel lifted the mute and saved the
+  muted list without it, and a host's reconcile `channels/open` (after a
+  reconnect, or a server restart, while the host still wanted the channel
+  open) is the same request, so a mute set with `mute_channel` didn't
+  survive the next reconnect. Only `unmute_channel` lifts a mute now. An
+  open of a muted channel still opens it and returns any history it asks
+  for, but leaves its traffic stopped, and it isn't subscribed:
+  `list_subscriptions` leaves it out, `channel_missed` says it's muted and
+  names `unmute_channel`, and after a restart a channel that
+  `DISCORD_SUBSCRIPTIONS_FILE` lists isn't subscribed while it's muted.
+  Unmuting a channel that is open brings its traffic back with no reopen,
+  and says so. `mute_channel`'s description says that `channel_open`
+  doesn't lift a mute, and both descriptions say that unmuting's answer
+  says whether traffic is back or still needs `channel_open`. Deliveries
+  owed to a channel that is opened while muted are now given up, as they
+  are for any muted channel; before, the open lifted the mute and they
+  were delivered.
+
+## 0.5.4 — 2026-10-28
+
+### Fixed
+
+- **This change requires sharp 0.35.5 or a later 0.35.x on install.** The dependency was `^0.33.5`, which can't install any version with the fixes for GHSA-f88m-g3jw-g9cj, GHSA-rgj7-g3m4-5g8c and GHSA-wq5f-xc86-pv6w (#124). If sharp uses system-installed image libraries, upgrading sharp alone does not update them; the operator must separately ensure that any libvips, libheif and librsvg libraries it uses include the relevant fixes.
+
+## 0.5.3 — 2026-10-28
+
+### Fixed
+
+- **A message holding U+2028 or U+2029 is no longer lost between
+  discord-mcpl and its host, and a TCP client's reset no longer ends the
+  process.** discord-mcpl now depends on `@animalabs/mcpl-core` `^0.4.0`.
+  It wrote U+2028 and U+2029 raw, so a host whose reader ends lines at
+  them, as `readline` does on Node 24 and later, lost a
+  `channels/incoming` message carrying either in its text, and any message
+  whose author's name holds either; it now writes them as `\u` escapes.
+  The reader discord-mcpl used, mcpl-core 0.2.1's, ended lines there too
+  on Node 24, so a host's call holding either raw was lost; it is now read
+  whole. A served TCP client whose connection was reset could raise an
+  uncaught error that ended the process, with the next client refused
+  meanwhile; now only that client's serving ends, and the next client is
+  served once any request it was handling has returned. Where a failed
+  host call's error is quoted, in the logs and in the replies of `/undo`,
+  `/marks`, `/hide`, `/unstick` and `/nudge`, it now reads in mcpl-core
+  0.4.0's words: without the `RPC error <code>: ` prefix; a timeout as
+  "<method> timed out: no reply came within <n> ms, so whether it ran is
+  unknown. Check its effect before retrying, since a retry may repeat
+  it."; and an error with no message, or with a message that isn't text,
+  as a sentence that says so.
+
+## 0.5.2 — 2026-10-28
+
+### Fixed
+
+- **A sender's words and chosen names can't take the shape of the server's
+  own framing (#122).** Each line break in a message's text, an edit's, an
+  inlined text file's or a reaction's snippet of the message (LF, CRLF, a
+  bare CR, U+2028, U+2029, U+0085, VT or FF) now starts a line indented by
+  two spaces, so every line at the left margin is the server's; a real
+  forward's `[forwarded message]` line is part of the text, so it's
+  indented too. A missed line and a first DM's backscroll line put the
+  message's attachments and reactions before its text, and an edit that
+  replaces its create puts `[edited]` after the author, before the text. A
+  forward's `[N attachments]` note comes after `[forwarded message]`,
+  before the forwarded text. A reaction's snippet ends its line, unquoted.
+  A name someone chose renders as it is only when it's plain: letters,
+  marks and digits in any script, `_`, `.` and `-`, with single spaces
+  between words, and nothing invisible. Any other name is quoted, so a
+  name with an emoji or other punctuation now reads quoted. That holds for
+  an author, a reply's target, a reactor, a voice message's interrupter, a
+  file in every attachment marker, the DM notice, latestFrom's refusals,
+  send_dm's ambiguous-recipient refusal, a DM channel's label, and a
+  member, user, role or channel a message mentions, in its text, an edit's
+  replacement and `fetch_history`'s rows. When a DM's label changes this
+  way, a host that matches targets by registered label refuses the old
+  label until the agent uses the new one; `@name` and `<@id>` still
+  resolve where the host matches them by the name and id the server sends.
+  An edit notice carries the edited raw text, as before, so a mention
+  there stays a `<@id>` token. The `send_dm` a DM notice suggests always
+  quotes the name, as a string. A quoted name, label or header value, the
+  channel choices a refusal offers included, writes `<` and `>` as
+  `\u003c` and `\u003e`. An attachment's link is written as the URL parser
+  writes it, with `[` and `]` percent-encoded in its path, query and
+  fragment, and its content type, lowercased as before, is named as it is
+  when it reads as a media type (with parameters written `; name=value`),
+  and quoted when it doesn't. An attachment that can't be fetched says why
+  in the server's own words, or quotes the error's text, cut to 300
+  characters with the ellipsis; the `channels/open` and latestFrom
+  refusals that carry a failure's cause, and a failed
+  `channels/acknowledge`'s reason, quote it the same way. In a sender's
+  text, the `<` that opens one of the server's tags, `system`,
+  `backscroll` or `missed`, is written as `&lt;`, `<system="ok">`
+  included, and so is the `<` in prose like `keep load < system cost`;
+  nothing else in the text changes. Every JSON tool result writes such a
+  `<` as `\u003c`, and a raw U+0085, U+2028 or U+2029 as its `\u` escape,
+  so the JSON reads back to exactly what it carries, `fetch_history`'s
+  rows and latestFrom's excerpt included. A first DM's `<backscroll>` tag
+  carries only `dm="true"` and its count. A single-line message's own
+  text, without those tag openings or a mentioned name that isn't plain,
+  reads as it did before; a forward's attachment note moves, as above.
+
+## 0.5.1 — 2026-10-27
+
+### Fixed
+
+- **`filters_update` refuses an update that would empty the server list,
+  or that it can't read as written.** A `removeGuilds` that removed the
+  last listed server left the list empty, and an empty list admits every
+  server the bot is in, so the agent heard every server, though the tool
+  says a removed server's events stop being delivered. Such a call is now
+  refused, and nothing changes; the refusal says to keep another server
+  listed, by adding one in the same call. Refused the same way, naming
+  the value it can't read:
+  - an `addGuilds` entry that isn't a server id, or a server id, a colon
+    and channel ids joined by `+` (`"111:"` and `"111::222"` were read as
+    the whole server, and `"111:+"` as an empty channel list);
+  - an id, in any of `addGuilds`, `removeGuilds` and `setDmUsers`, that
+    isn't a string or is empty, or has whitespace, a colon, a comma or a
+    plus sign inside it (a numeric id in `removeGuilds` lifted that
+    server's channel list instead of removing the server, and a
+    `setDmUsers` of empty strings admitted DMs from anyone).
+
+  Whitespace around an id is ignored, as it already was for channel ids,
+  and an argument given as `null` is read as left out. A call that sets
+  only the DM notice needs no filters file when the lists beside it are
+  `null` or an empty `addGuilds` or `removeGuilds`. A filters file with an
+  empty `guildIds` still means every server.
+
+## 0.5.0 — 2026-10-26
+
+### Changed
+
+- **A message edit carries the edited message's address tags, as its
+  create does.** An edit's push was tagged only `chat:edited` (and
+  `chat:thread` in a thread), so a host couldn't tell an edit to a message
+  addressed to the bot from an edit to chatter. It now also carries
+  `chat:mention`, `chat:reply`, `chat:dm` and `chat:private`, `chat:addressed`
+  or `chat:ambient`, and `chat:from-bot` or `chat:from-human`, read from the
+  message as edited by the same rule as a create: an edit that adds a
+  mention is addressed, and one whose message no longer mentions or replies
+  to the bot, outside a DM, is ambient. An edit whose addressing isn't known
+  carries no address tags, as before: one whose message discord.js holds
+  only in part, or an edit of a reply whose target Discord didn't send.
+  What that changes is a host's gate's to say. agent-framework ships no
+  default gate, and without one every edit woke the agent before and still
+  does, tagged or not. Under a gate with rules on these tags, such as
+  connectome-host's documented example, edits used to fall past those
+  rules. Now an edit of an addressed message, a typo fix included, meets an
+  immediate rule on `chat:addressed` and wakes the agent at once, and an
+  edit to chatter meets a rule on `chat:ambient`. That includes each edit
+  of a bot's reply to the agent, which is a `chat:reply`, so a bot that
+  streams its reply by editing it can wake the agent while it's still
+  writing. A host that would rather edits didn't wake at once can put a
+  rule on `chat:edited` (with `chat:from-bot` for such a stream) above its
+  address rules.
+
+- **`discord.messaging` declares `chat:edited` and `chat:deleted`** in its
+  tag ontology, the tags its edits and deletions already carried, so a
+  host's or agent's list of the server's tags names them.
+
+- **What is sent again after a host's answer rests on the MCPL spec alone,
+  not on one host's words.** discord-mcpl serves more than one kind of
+  host, and 0.4.0 recognized only agent-framework's two "could not persist /
+  make durable the acceptance; retry" sentences. A forwarded message, edit or
+  delete is now read by what the spec defines:
+  - **Accepted**, or answered without a verdict: done.
+  - **A refusal the spec gives a meaning** (-32602 / `coalesce_invalid`,
+    every other code SPEC Appendix A defines but -32023, JSON-RPC's -32600,
+    -32601, -32700): final, logged, never sent again as it is. A permission
+    refusal (-32001, -32002, -32017) answered before the connection's
+    start-up had settled is "not yet": a host denies with them until its
+    policy is in place, so the occurrence is sent once more when it is.
+  - **-32023, an unknown channel**: the channel is announced to the host
+    again (`channels/changed`) and the same occurrence sent once more, on
+    any host: it wasn't admitted, so it can't be a duplicate.
+  - **A refusal the spec gives no meaning** (`accepted: false` with a
+    free-text reason or none, or a JSON-RPC error whose code is outside
+    JSON-RPC's reserved range, such as an application's own): sent once
+    more as the same occurrence.
+  - **No verdict** (no answer, a closed connection, -32603, or another
+    code JSON-RPC reserves (-32768 to -32000) that neither it nor the spec
+    defines, mcpl-core's own timeout included): sent again as the same
+    occurrence after 1 s, 5 s and 30 s while answers stay that way.
+
+  The last two only for an occurrence that carries `coalesce`, to a host that
+  advertises event coalescing for its lane: RFC-006 §3.1 obliges that host to
+  recognize a repeated `eventId` for its retry window (`retryWindowMs`, an
+  hour by default) and return the first result without repeating its
+  effects. Resends stop at half that window after the first send. A host
+  that advertises no coalescing gets each occurrence once, as before. A
+  resend reaches the host after messages that came after it, each with its
+  own timestamp, which is why the waits are short. Every
+  resend is logged (`[discord-mcpl] <what>: <answer>; sending the same
+  occurrence again (same event id) in <n>ms`, then `[discord-mcpl] sent
+  <what> again (same event id): <answer>`), and so is each one skipped
+  (`…; not sent again: <why>`).
+- **A resend waits up to a minute for the host to come back.** On the TCP
+  transport, after a reconnect it goes to the host connected since, once
+  that host's start-up has settled (initialized, its policy answered, the
+  channels registered), as RFC-006 §3.1 allows ("survives reconnects and
+  host restarts"); never to a host that advertises no coalescing. 0.4.0
+  dropped it instead. At most 64 occurrences wait for a host at once (each
+  holds its content while it waits). Only an occurrence that fits that host
+  goes: never one sent through an open channel (`channels/incoming`, for the
+  host that opened it), and one scoped to a channel only if it takes
+  channel-scoped pushes. (A stdio server exits with
+  its host, so there is no next host to send it to.) An edit or delete that waited for its message's
+  create is held for the host connected since until its start-up has
+  settled, too (a minute at most), and a create still being sent is never pushed out of the
+  memory an edit waits on.
+- **An edit or delete the host fails with an error of its own** (a -32000
+  to -32099 code the spec doesn't define, -32603) is logged on stderr
+  (`[discord-mcpl] host failed <edit|delete> of message …`) after its
+  resends; no answer stays in the debug log, as before.
+- **A later edit or delete no longer waits for an earlier one being sent
+  again.** It goes at once, and the earlier one isn't sent again: the later
+  occurrence replaces or withdraws the message.
+- **A host that connects after another waits for its own policy before the
+  channels are registered with it**, as the first one does. The policy gate
+  was answered once per process, so a second connection was sent
+  `channels/register` straight after `initialize`, before its policy.
+- **A message the host didn't take is owed, and delivered later.** The
+  watermark moves past a message when it's forwarded, so one the host
+  didn't take, after every resend, was lost for good: neither the catch-up
+  sweep nor a later backscroll would see it again. Such a message is now
+  owed: one that got no verdict (marked as one that may have arrived after
+  all), or one refused for a reason the spec gives no meaning, and an edit
+  not taken (its message is owed, marked as edited). A refusal the spec does
+  give a meaning (malformed, not permitted, unknown channel) isn't owed: it's
+  the host's decision or this server's bug. What is owed is delivered as
+  Discord has it then, in one `<missed … reason="undelivered">` block per
+  channel, like the catch-up's, when a host connection becomes ready
+  (alongside the catch-up, not ahead of it; one that becomes ready while a
+  delivery still runs on the connection before it delivers once that ends),
+  and when the host takes a message in that channel again, on a connection
+  whose start-up has settled (not within five minutes of a failed try on the
+  same connection). One read of up to 100 messages from Discord answers
+  for every owed message inside it. They go through the same ingestion gate
+  as live messages: one that doesn't address the agent goes only while its
+  channel is open or subscribed. A message Discord no longer has, one the
+  filters or the gate refuse now, and those of a muted, deleted or unknown
+  channel are given up (Discord not knowing the channel is read as the
+  catch-up reads it: the channel is gone). A block not delivered (not taken, a failed read, a channel whose
+  identity can't be resolved, or a filter refusal resting on facts that
+  aren't current, which the catch-up holds back too) counts a try (not one
+  cut short by its connection ending), and three tries give it up; a refusal with a code the
+  spec gives a meaning, or an unknown channel, gives it up at once. A later
+  edit or delete of the message that the host takes clears what was owed for
+  it; a message owed again while a delivery of it is on its way stays owed. At most 50
+  messages are owed per channel. They are kept with the watermarks (`DISCORD_WATERMARK_FILE`,
+  under `owed`, written only while something is owed), so a restart
+  delivers them. Logged: `[discord-mcpl] Message <id> in channel <id> is
+  owed: …`, `[discord-mcpl] Delivered <n> owed message(s) in channel <id>.`,
+  `[discord-mcpl] Couldn't deliver <n> owed message(s) in channel <id>: …`.
+- **The resend without inline media is named for what it is**: a
+  compatibility measure for agent-framework's hosts before 0.22.2, which
+  answered -32602 / `coalesce_invalid` to content over a 1 MiB budget. In
+  the spec those answers mean a malformed request; on another host the
+  resend costs one request.
+
+## 0.4.0 — 2026-10-22
+
+### Upgrade notes
+
+- **Upgrade the host's agent framework first, or together with this release.**
+  `/undo` now needs the `marks` host command, which the agent framework gains
+  with anima-research/agent-framework#250. On a host without it, `/undo` is
+  refused for every option, so a deployment that takes this release before its
+  host does loses `/undo` from Discord until the host upgrades. Each `/undo`
+  asks the host, so it works again once the upgraded host is connected. To
+  tell whether a host has the command, run `/marks action:list`: on a host
+  without it, the reply says the host has no awareness-mark controls.
+- **`/undo` and `/hide` mark nothing unless `marks` is chosen.** `/hide` used
+  to react 💤 on every hidden message by default; choose `marks: all` for that.
+  The admin commands' entry under Changed has the details.
+
+### Changed
+
+- **The admin commands make 💤 awareness marks an explicit choice.**
+  - `/undo` takes an optional `marks` choice: `none` (the default),
+    `addressed` or `all`. On a host whose agent framework has the `marks` host
+    command (anima-research/agent-framework#250), the host places the marks,
+    keeps them in its awareness ledger, and returns a `markers` receipt. The
+    reply says what it scheduled: requested, not yet confirmed on Discord.
+  - `/hide` takes `marks: none` (the default) or `all`. Its 💤 is this server's
+    own, as before: with `all`, it's added to each message the host says it
+    hid, on any host. The reply goes out as soon as the hide is applied and is
+    edited once the 💤 have settled, with how many Discord confirmed. It says
+    they're outside the host's ledger: `/marks` doesn't list them, and a
+    retract reaches one only on a message the host's ledger also names, when
+    the host's marks are 💤 too. The host places no marks for a hide.
+  - A new admin command, `/marks action:list [target:<id>] [page:<n>]` and
+    `/marks action:cancel|retract target:<id>`, shows the host's awareness
+    ledger and acts on it, ephemerally:
+    - `action:list` pages the ledger newest first, each page within one
+      Discord reply. Each entry counts its messages' reactions by state
+      (queued, sending, present, absent, unknown, failed, untouched) and says
+      how many may still land. `action:list target:<id>` shows one batch or
+      retract in full, with what each state means. A batch imported from
+      agent-framework 0.22.x's ledger says how many marks 0.22.x recorded as
+      added, and the entry in full says that marks it placed may still be on
+      Discord, and how to take them down.
+    - cancel and retract each answer with what that action's receipt says.
+      Cancel keeps its limits: confirmed marks stay, and a reaction with a
+      request on the wire or one never answered may still land. A batch's
+      cancel also says how to take its marks down.
+    - A reply too long for one message is cut visibly, with what it shows
+      attached in full: the host's answer, or for `action:list target:` the
+      entry. An answer in a shape this server can't read is shown as sent.
+      Only the host's `ok: false` reads as a failure: an answer to `/undo`,
+      `/hide` or a `/marks` control without a boolean `ok` is shown as sent,
+      with a warning that it may have been applied.
+
+  To learn which kind of host it has, `/undo` and `/marks` ask with a `marks`
+  request that names no action, which the host answers without reading its
+  ledger. `/hide` never asks. A probe whose request fails (a timeout, a host
+  that refuses host commands) stops the command with nothing changed, and says
+  that running it again can work after a timeout or once the host is back, and
+  that a host refusing host commands has to allow them for this server. On a
+  host without the verb, `/undo` is **refused** whatever the option. Such a
+  host's undo places marks that follow branches: they are re-applied on every
+  switch, with no frozen audience and no cancel, so no choice here can
+  authorize them as a one-shot act.
+
+### Fixed
+
+- **An occurrence the host took but couldn't keep is sent once more, as
+  the host asks.** agent-framework's event coalescer answers -32000 "host
+  could not persist the acceptance; retry" (or "host could not make the
+  acceptance durable; retry") when it couldn't keep an occurrence's
+  receipt, and expects the producer to send the same occurrence again within
+  its retry window (`retryWindowMs`, one hour, advertised at initialize). A
+  create, a resend without media, an edit or a delete that gets that answer,
+  as a `channels/incoming` item reason or a `push/event` error, is now sent
+  once more after 1 s (at most half the advertised window), with the same
+  `eventId` and `coalesce` member; the retry and its outcome are logged
+  (`[discord-mcpl] host couldn't keep … ; retrying once with the same event
+  id in <n>ms`, then `[discord-mcpl] retried … with the same event id:
+  <outcome>`). Never more than one retry. Only those exact words count:
+  mcpl-core's own -32000 timeout (unknown outcome) and "host is stopping"
+  are not retried. An edit or delete isn't retried once a later edit or
+  delete of the message has gone out (resending it after would put the older
+  version back), and a later one waits for a retry in progress until it is
+  sent (not for its answer). A retry goes only to the host that asked for it:
+  when that connection ends during the wait, the retry is dropped and logged
+  (`not retried: the host's connection has ended`), and an edit or delete
+  that waited is not sent to the next host either.
+- **A message the host refuses is no longer reported as sent, and one
+  refused for a large inline image still reaches the agent as text.** A
+  forwarded message's answer is now read: `channels/incoming`'s per-message
+  `results[]`, `push/event`'s `{accepted, reason}`, and a JSON-RPC error the
+  host refuses it with. A refusal logs `[discord-mcpl] host rejected
+  message <id> in <channel>: <reason>` on stderr and
+  `handleDiscordMessage:rejected` in the debug log, with what the message
+  carried inline; `handleDiscordMessage:sent` now means the host accepted it
+  (or answered without a per-message verdict) and carries `result`. A
+  request that gets no answer (a timeout or a closed connection), or an
+  error the host fails with (-32000, -32603), is logged as a failed send, as
+  before. `channels/incoming` answers each message without a code, so there
+  the host's own failure can't be told from a refusal, and the line reads
+  `host didn't take message <id> in <channel>: <reason>`, in the host's
+  words. A message refused for its content (`coalesce_invalid`, or a -32602
+  error) while it carried inline images or audio is sent once more with
+  each inline block replaced by a text note, under a fresh occurrence id
+  (`<eventId>_media_omitted`) on the same coalescing subject; its outcome is
+  logged, and it is never resent again. An edit that replaces it carries the
+  same notes and links, while they fit the 64 KiB the server keeps for an
+  edit. agent-framework's coalescing hosts before 0.22.2, its 0.21 line
+  included, refuse a coalesced message whose content, inline base64
+  included, passes 1 MiB (agent-framework#267 removed that budget in
+  0.22.2), so a message with a large screenshot was lost, text and all,
+  while this server logged it as sent on `channels/incoming` and as a
+  failed send on `push/event`. A refused edit or delete is logged too
+  (`[discord-mcpl] host rejected edit of message <id> in <channel>:
+  <reason>`).
+
+## 0.3.0 — 2026-10-18
+
 ### Upgrade notes
 
 - **discord-mcpl now needs Node.js 22.12.0 or later.** If you run it on
@@ -53,8 +508,225 @@ in the git log and PR descriptions.
   carries `expiresAt` beside its `url`, and both tools' descriptions say
   what it means. A URL without a readable `ex` gets neither.
 
+- **A message that addresses the agent from a channel it hasn't opened says
+  what reaches it from there.** The push for a message posted in a guild
+  channel or thread that is neither open, subscribed nor muted, such as one
+  that mentions the bot or the role Discord created for it, or replies to
+  one of its messages, now begins with `<system>While this channel isn't
+  open, a message from it reaches you as it's posted when it mentions you or
+  the role Discord created for you, or replies to one of your messages.
+  Opening it brings its other messages as they arrive.</system>`, before the
+  message's own line. After a restart, a closed channel's catch-up block
+  gets the same note. A DM, a subscribed channel's message and an open
+  channel's `channels/incoming` carry no such note, and neither does an edit
+  that replaces the message, a reaction's push, which the agent turns on per
+  channel with `set_reaction_visibility`, a push from a channel muted while
+  the message was on its way, or one whose channel the delivery couldn't
+  register: deleted, archived, in a server the bot left, no longer admitted
+  by the channel filters, not held in the client's cache, or with facts that
+  may be older than Discord's.
+
+### Changed
+
+- **These refusals, each given before the call sends or saves anything,
+  now say what didn't happen and what the agent can do.** Anything matching
+  one of the old texts, quoted here, needs the new one:
+  - A tool whose feature set the host disabled ("Feature set '<set>' is
+    not enabled") names the tool and the feature set, says that the call
+    didn't run and that calling it again won't change that, and points to
+    whoever runs the host.
+  - `set_reaction_visibility`, `mute_channel`, `unmute_channel` and
+    `channel_missed` ("channelId is required"), and `fetch_history` and
+    `fetch_around` ("<tool> needs channelId as a channel id string, such as
+    …"), without a usable `channelId`: each says that nothing was done, or,
+    for `channel_missed` and the history reads, read, and what was wrong with
+    the value given, and that the id goes in quotes. It names the channels a
+    #name reaches (text, announcement, voice and stage channels), and says
+    that `list_channels` with `guildId`, a server's id from `list_guilds`,
+    lists the channels there that the configured filters allow.
+  - An unknown tool name ("Unknown tool: <name>") says that nothing ran.
+  - The retired `subscribe_channel` ("subscribe_channel is retired. Use the
+    host channel_open tool with the MCPL channel id.") and
+    `unsubscribe_channel` ("unsubscribe_channel is retired. Use the host
+    channel_close tool with the MCPL channel id.") now begin by saying that
+    nothing was done, and name the id the host's tool takes as the agent
+    sees it: `discord:<server id>:<channel id>`, or
+    `discord:dm:<channel id>` for a DM.
+  - A send with neither content nor files ("Provide "content", "files", or
+    both — a message cannot be empty.") says that nothing was sent.
+  - `filters_update`'s `setDmNotice` check ("setDmNotice must be true or
+    false.") adds that nothing was changed.
+  - The attachment checks ("Too many files: <n> (Discord allows up to 10 per
+    message)", "Each file must have a non-empty string "path"" and "File not
+    found (or not a regular file): <path>") say that nothing was sent and
+    what to send instead. The count check names the count, and each file's
+    check names the file by its place in the list or by its path as read on
+    the machine running discord-mcpl.
+- **Built with TypeScript 7.** The `typescript` dev dependency is now
+  `^7.0.2`, the native compiler, in place of 5.9.3. Built from the same
+  tree, the JavaScript is byte-identical to 5.9.3's, in `dist/src` and
+  `dist/test` alike. Two declarations print their string-literal types with
+  single quotes, the same types: `TOOL_CLASS_VOCABULARY` in
+  `tool-classes.d.ts` and `PlaybackFailure` in `voice.d.ts`. TypeScript
+  5.9.3 and 5.0.4 read the new declarations without errors, with
+  `skipLibCheck` off. Source maps differ in their `mappings` only, which
+  reaches only tools that read them, such as a debugger or Node's
+  `--enable-source-maps`: a position can resolve to another column or to
+  none, and go-to-definition can land on another line. Without that flag,
+  Node's stack traces cite the JavaScript, which is unchanged.
+- **Building from a clone needs TypeScript 7's native binary.** `tsc` now
+  comes from one of 20 per-platform packages that npm installs as optional
+  dependencies, so an install that leaves out optional dependencies, or a
+  platform with no package, such as 32-bit x86 or Android, can't build.
+  TypeScript 7 ships no `tsserver`, so an editor set to use the workspace's
+  TypeScript finds no language server there. `tsconfig.json` now names the
+  Node types (`"types": ["node"]`), which TypeScript 7 no longer includes
+  on its own.
+
 ### Fixed
 
+- **The send tools say where a message's text goes.** `send_message`'s and
+  `reply_message`'s `content` now say, in `send_dm`'s form, that it holds
+  the text to send, required unless files are attached, and that a call
+  that gives neither is rejected as empty. `send_dm`'s description says
+  to reply to a DM by passing the sender as `userId` and the reply as
+  `content`. An agent that left the text out of the call, writing it only
+  in its reasoning, could repeat a refused call.
+
+- **`set_reaction_visibility`, `mute_channel`, `unmute_channel` and
+  `channel_missed` given a blank `channelId`, and a send given a value of
+  the wrong kind, no usable `userId`, or a file this process can't read, no
+  longer go ahead.** `set_reaction_visibility`,
+  `mute_channel`, `unmute_channel` and `channel_missed`, and no other tools,
+  read `channelId` trimmed: a whitespace-only id, which `mute_channel` saved
+  as a muted channel, is refused, and a padded id is used without its
+  padding. `channel_missed` checks its `channelId` before it loads anything,
+  so a refused call no longer sets aside and rewrites an unusable watermarks
+  file. The send tools refuse, before anything is sent: `files` given as
+  something other than a list, such as a string or an object, where it
+  failed with a raw TypeError or as too many files (a value that says none,
+  null, `""`, `false` or `0`, still means no files); a file's `name` that is
+  neither a string nor a value that says none, where it failed with a raw
+  TypeError, and a `description` that is an object or a list, which was sent
+  to Discord with the last part, after the parts before it had posted (a
+  name or description that says none, null, `""`, `false` or `0`, is still
+  left out, and a description given as a number or `true` is sent as its
+  text, such as "42"); and `content` that is given and isn't a string, where
+  it failed with a raw TypeError, or, for `0`, was read as no content
+  (`null` and `false` still are, so files given with them post alone).
+  `send_dm` without a usable `userId` is refused before the recipient is
+  looked up, where it failed with a raw TypeError and named its destination
+  as a DM with "undefined". A file this process can't read is refused before
+  any part of the message is sent: it failed at send time, after the parts
+  before it had posted.
+- **A filters change re-derives the registered labels.** Names resolve only
+  among the channels the filters admit, and a `#name (server)` label is kept
+  only while its name resolves back to its channel. A change that admitted
+  or dropped a channel inside a server already admitted re-derived nothing,
+  so a label could reach another channel: admitting text `general` beside a
+  registered voice `General` left the voice channel labelled `#General
+  (server)`, which then resolved to the text channel, and dropping text
+  `general` from the filters file left its label resolving to the voice
+  channel. Every change, by `filters_update` or a reload of the filters
+  file, now re-derives every registered channel. A server the filters no
+  longer admit keeps its channels listed until restart, as before, now under
+  their ids, since discord-mcpl stopped resolving their names with the
+  removal. A host that resolves an agent's prose (`>>name`) from the labels
+  registered with it, as agent-framework does, follows the re-derived labels
+  after a filter change: prose by a name reaches the registered channel that
+  now holds the name, and bounces with "no channel matches" while none does.
+  A channel the change admitted isn't registered until something registers
+  it, such as a message from it, `refresh_channels` or a restart, and when
+  two channels of one kind now share a name, both are labelled by their ids.
+  Before, a label left stale kept carrying such prose to its old channel,
+  including one the filters no longer admit. Registering is as before: a
+  change that admits a new server registers every text, announcement, voice
+  or stage channel the filters admit that isn't registered yet, in any
+  admitted server, and any other change registers none.
+- **The catch-up looks a thread's stale channel up before it decides, and
+  holds back what it would withhold on facts that aren't current.** A thread
+  the channel filters admit only through its channel's category had every
+  missed message withheld when that channel's facts were stale at the
+  catch-up, since a stale channel's category admits none of its threads, and
+  the catch-up then moved its watermark past them, so no later start
+  delivered them. The catch-up now looks the thread's channel up first, as a
+  live message does. When the channel filters would withhold a channel's
+  messages and a fact that answer rests on isn't known or current after the
+  lookups (the channel's own, while it's stale, or for a thread, its
+  channel's, while that's stale or not known), the channel is held back with
+  its watermark untouched, and stderr says which fact. It's tried again at
+  the next start, so if the filters admit it by then, its messages arrive
+  then, where before they were skipped; a message forwarded live in it
+  before then moves its watermark past them, as for a channel whose identity
+  can't be resolved. An answer that admits the messages stands, as before.
+- **`channels/open` opens exactly the channel it was asked for.** A stale or
+  unknown `channelId` used to fall through to the first registered channel of
+  the same type, so a host could open, subscribe to, and receive history from
+  a different channel than it named. Now `channelId` is the exact selector.
+  agent-framework's `ChannelsOpenParams` gives it as the exact registered id,
+  preferred over type and address matching (MCPL's SPEC gives `channels/open`
+  no `channelId`), and this server reads it strictly: a `channelId` alone
+  selects, and an `address` beside it isn't read; without a `channelId`, an
+  `address` naming a guildId and a channelId selects. Either names exactly one
+  channel or is refused: an id the registry doesn't hold is looked up in
+  Discord, and opened when it's a channel messages are posted in (text,
+  announcement, voice or stage), a thread, or a DM, that the filters admit,
+  so a DM or thread after a restart still opens. The open registers it only
+  when it succeeds, by the rule every other path registers by, so a refused
+  open registers and announces nothing itself. A guild channel is registered
+  from what the cache knows then, and the registered channels of its name are
+  re-derived, as a channel's creation does; a DM keeps the descriptor its
+  lookup built. (The lookup fetches a stale channel fresh, a looked-up
+  thread's stale channel included, and that fetch registers the channel when
+  it's a text, announcement, voice or stage channel the filters admit, as any
+  fresh fetch of a stale channel does.) A looked-up DM's recipient is the
+  party at its other end, and when the cache can't name it, as when
+  discord.js recorded only the bot, Discord is asked again, past the cache. An
+  archived thread opens too, since the host named it, and is forgotten as any
+  archived thread is: when it's reported archived again, or a sync of its
+  channel's threads doesn't list it. Any other id is refused, a lately
+  deleted channel, a thread of one, and a channel of a guild the bot has left
+  included, whatever an address beside it says, and so is a lookup that
+  finds a different channel. A channel outlives its deleted category. A
+  request with no selector (`channelId` absent or null, and `address` absent,
+  null or `{}`) opens the one registered channel of its type, DMs and threads
+  counted, and is refused when there are none or several; a refusal over
+  several lists the first ten and points to `channels/list` for the rest.
+  `type`, which MCPL requires, must be a non-empty string on every request and
+  must match the channel opened, so a registered `channelId` with a different
+  `type` is refused too. An empty-string `channelId`, which used to be read as
+  absent, is refused, and address ids must be strings. Refusals carry MCPL's
+  codes: unknown channel (`-32023`), invalid params (`-32602`), or open failed
+  (`-32024`, when the lookup can't get the channel's current facts, the
+  history fetch fails, or the channel filters refuse reading its history or
+  can't be checked). No history is fetched, and nothing is opened or
+  subscribed, before a request names its channel. Requests are handled one at
+  a time, so a `channels/close` or `mute_channel` sent during an open is
+  handled after it, and closes what it opened. A
+  channel unregistered while the open is in progress isn't opened, and neither
+  is one looked up that's deleted, or whose server the bot leaves, meanwhile,
+  or a DM looked up whose recipient the DM list stops admitting meanwhile. A
+  channel gone meanwhile, as far as this server has heard, is refused as
+  unknown (`-32023`) wherever the open notices it: when the channel filters
+  can't find it or refuse it, when its history fetch fails, and at commit. A
+  registered thread archived meanwhile is refused that way too, and opening
+  it again by its id opens it.
+  History items carry the label the open commits to. `sinceLastSeen` reads the
+  persisted watermark even on the first open after a restart, before anything
+  else has loaded it. An id the registry doesn't hold is looked up as every
+  fetch past the cache is: Discord's Unknown Channel there is a deletion, and
+  an id Discord refuses (Missing Access, a malformed id's Invalid Form Body,
+  or any other 403 or 404) is unknown. An id whose current facts can't be had
+  (Discord gives no answer, or refuses for a reason that isn't the id, such as
+  a 401 after the bot's token changed; every try is overtaken by a change; or
+  a thread's stale channel can't be fetched fresh) is refused as an open that
+  failed, and another open looks it up again.
+- **`channels/open` returns no backscroll from a channel the filters stop
+  admitting while its history is fetched (#94).** The filters file is
+  reloaded on a timer, so it can narrow during the fetch. The open checked the
+  filters only before fetching, and returned what it fetched. It now checks
+  them again after the fetch and refuses as an open that failed (`-32024`),
+  with nothing returned, opened or subscribed.
 - **Thread fields name the thread a message was posted in.** They were read
   from discord.js `message.thread`, which is the thread a message *started*,
   so a message that had spawned a thread was tagged `chat:thread`, rendered
@@ -283,6 +955,71 @@ in the git log and PR descriptions.
   automatic DM notice's failure, in the operator log, now names the
   channel's kind, or says that this version can't handle it, where it said
   `not found or not a text channel`.
+- **A message the REST client sends again no longer posts twice.** The REST
+  client sends a request again after a 5xx, a timeout or a reset connection,
+  so a message whose first attempt posted, and whose answer was lost, could
+  post a second copy. Each message sent by `send_message`, `reply_message`,
+  `send_dm` or a host's `channels/publish`, and each part of one sent in
+  parts, now carries a nonce of its own, which Discord enforces: it answers
+  a repeat sent within a few minutes with the message it already made.
+- **A message sent in parts is no longer hard-cut inside a character.** A
+  message longer than 1,900 UTF-16 code units is sent in parts, each cut at
+  a line break or a space late enough in its first 1,900 units, or else
+  hard, at the last character boundary at or before 1,900 units, so the
+  character begins the next part. The hard cut used to fall at 1,900 itself,
+  which could be inside a character: between the two halves of one outside
+  the Basic Multilingual Plane, such as most emoji, or between the code
+  points of what a reader sees as one character, such as an emoji's ZWJ
+  sequence, a flag's two regional indicators, or a letter and its combining
+  marks. A single character longer than 1,900 units is still cut inside,
+  never between the halves of a surrogate pair.
+- **Missing Permissions and a refused DM are explained, and a send tool
+  whose message fails says what posted.** A tool's error for Discord's
+  Missing Permissions (50013) now says that Discord refused the request
+  because this bot lacks a permission it needs, in the channel or server the
+  call named, and that calling again will be refused the same way until
+  someone who manages the server's permissions grants it. When the refused
+  request was a message post, it names what Discord documents a post needs:
+  Send Messages (Send Messages in Threads, in a thread); Read Message History
+  too when the part refused was a reply's first, which carries the reply;
+  and Attach Files too when the part refused carried files, saying that the
+  text alone may go through if Attach Files is all that's missing. Discord
+  doesn't say which of the permissions named is missing, so a refusal naming
+  more than one speaks of granting what's missing. Another request's refusal
+  names no permission, since which one it needs isn't known there. A DM
+  Discord won't deliver says so, naming the recipient when the call names
+  them, with each cause it may have and who can change it: 50278 is that the
+  recipient shares no server with this bot, which changes when they join one
+  this bot is in or this bot is added to one they're in; 50007 may be that,
+  or the recipient's DM setting or a block, which only they can change. A
+  message longer than 1,900 UTF-16 code units is sent in parts, with any
+  files on the last. When a part of a message sent in parts fails, the error
+  of `send_message`, `reply_message` or `send_dm` now says which parts posted,
+  with their message ids; whether Discord refused the part that failed or
+  its outcome is unknown (a 5xx, a timeout or a lost connection); where the
+  rest begins in the text as sent, by its first words, if that part didn't
+  post and, when its outcome is unknown, if it did; and that sending the
+  whole message again could post parts twice. When Discord refused the part,
+  it says to send only the rest when sending again, unless that part carried
+  the message's files, which may be what Discord refused; there, the Missing
+  Permissions explanation says the text may go through without them.
+  When the outcome is unknown, it says to check the channel's latest
+  messages first where `fetch_history` would show them: with its feature set
+  on, the channel filters admitting the channel, the channel's history cap
+  (`DISCORD_BACKSCROLL_CHANNELS`) above 0, and this bot holding Read Message
+  History there, without which Discord shows no messages. Otherwise
+  it says that this can't be checked from here, what sending again and not
+  sending each risk, and that someone who can see the channel can tell. A
+  message sent in one part whose outcome is unknown says the same. A first
+  part that Discord refused says that none of the message posted; a message
+  sent in one part that Discord refused gets no such note, since Discord's
+  refusal means it didn't make the message, and the error is that refusal.
+  After parts posted, the Missing Permissions explanation says that sending
+  what didn't post will be refused, rather than calling again, or, when the
+  part refused carried the files, that the permission missing is likely
+  Attach Files and the rest of the text may go through without them. A
+  host's `channels/publish` gets the nonces and the cut above, and its
+  errors are unchanged.
 
 ## 0.2.0 — 2026-10-13
 
@@ -372,9 +1109,11 @@ in the git log and PR descriptions.
     name), channel, time, and an excerpt of at most 80 characters, cut by
     code points so no emoji is split. `add_reaction` and `remove_reaction`
     return `{ result, target }` for a `latestFrom` selection.
-  - **A `latestFrom` reply to a message that's gone fails** instead of
-    posting unthreaded, since its target was chosen for it. A reply by
-    `messageId` posts unthreaded instead (below).
+  - **A reply to a message that's gone fails** instead of posting
+    unthreaded. Today discord.js's default (`fail_if_not_exists`) does that
+    for every reply. A `latestFrom` reply also asks for it explicitly, since
+    its target was chosen for it, so it keeps failing if the default for
+    other replies changes (#58 makes them post unthreaded instead).
   - **Selectors:** both are nullable and neither is required, so sparse
     calls and all-properties calls with the unused one null both work. Only
     omission and null mean absent: a string is a selector given, blank
@@ -385,11 +1124,6 @@ in the git log and PR descriptions.
   - **`list_channel_members`** reports, for a thread, `unresolved` (members
     listed by ID only, whose names couldn't be read) and
     `possiblyIncomplete` (Discord returned exactly one page of members).
-- **A reply whose target is gone still posts** (#58). `reply_message` by
-  `messageId` used to fail the whole send with "Unknown message" when that
-  message had been deleted or the id was wrong; it now posts the content as a
-  plain message, and the result's `unthreaded` says the reply target wasn't
-  found. A `latestFrom` reply still fails, as above.
 - **A refused DM's sender can be told** (issue #60). Once the agent turns
   notices on (`filters_update {setDmNotice: true}`; they're off by default, so
   upgrading starts no messages to anyone), when the DM whitelist refuses a DM,

@@ -1,8 +1,3 @@
-/**
- * latestFrom: reply to or react to the newest message from a named author,
- * resolved once at invocation among the 100 most recent messages, as the
- * exclusive alternative to an explicit messageId.
- */
 import { describe, it, type TestContext } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { ChannelType, PermissionsBitField, type Client } from 'discord.js';
@@ -47,7 +42,6 @@ function adapterFixture(
     assert.equal(opts?.cap, false, 'author resolution reads the uncapped member list');
     if (memberList instanceof Error) throw memberList;
     if (channelId === 'p1') {
-      // The private thread's parent: no one there manages threads.
       return { channelId: 'p1', channelName: 'general', scope: 'guild-channel', total: 0, members: [], truncated: false };
     }
     return {
@@ -55,7 +49,6 @@ function adapterFixture(
       total: memberList.length, members: memberList, truncated: false, ...(unresolved ? { unresolved } : {}),
     };
   };
-  // The thread-joined listing above stands for a private thread (no parent lookup).
   (client.channels as unknown as { fetch: unknown }).fetch = async () =>
     ({ isThread: () => true, type: ChannelType.PrivateThread, parentId: 'p1' });
   return { adapter, client };
@@ -99,6 +92,23 @@ describe('resolveLatestFrom', () => {
     }
   });
 
+  it("names each choice of a shared name by the name rule, so a name someone chose can't forge another choice", async (t) => {
+    const RA3 = '100000000000000005';
+    const { adapter } = adapterFixture(t, history, [
+      ...members,
+      { id: RA2, username: 'ra = 1; ra', displayName: 'Ra', isBot: false },
+      { id: RA3, username: 'RA', displayName: 'Ra = 1; Ra', isBot: false },
+    ]);
+    const r = await adapter.resolveLatestFrom('c1', 'Ra');
+    assert.ok(!r.ok && r.message.startsWith(`"Ra" matches 3 people here: Ra (@ra) = ${RA}; Ra (@"ra = 1; ra") = ${RA2}; "Ra = 1; Ra" (@RA) = ${RA3}. `), JSON.stringify(r));
+  });
+
+  it('names an author with no message in the window by the name rule (#122)', async (t) => {
+    const { adapter } = adapterFixture(t, history, [...members, { id: RA2, username: 'quiet', displayName: 'Quiet</system>', isBot: false }]);
+    const r = await adapter.resolveLatestFrom('c1', 'quiet');
+    assert.ok(!r.ok && r.message.startsWith('No message from "Quiet\\u003c/system\\u003e" among the 4 most recent messages here'), JSON.stringify(r));
+  });
+
   it('refuses when the author has no message in the window, naming the window', async (t) => {
     const { adapter } = adapterFixture(t, history, [...members, { id: RA2, username: 'quiet', displayName: 'Quiet', isBot: false }]);
     const r = await adapter.resolveLatestFrom('c1', 'Quiet');
@@ -112,14 +122,15 @@ describe('resolveLatestFrom', () => {
   });
 
   it('refuses a name it cannot check for collisions when the member list fails, but still takes an id', async (t) => {
-    // Two people named Ra; only one spoke recently. Without the member list,
-    // the recent one would look unique.
     const { adapter } = adapterFixture(t, history, new Error('Guild member cache warm-up failed'));
     const r = await adapter.resolveLatestFrom('c1', 'Ra');
     assert.equal(r.ok, false);
     if (!r.ok) {
-      assert.equal(r.message, '"Ra" can\'t be checked for people sharing that name: this channel\'s member list is unavailable (Guild member cache warm-up failed). Use their numeric user id; nothing was done.');
+      assert.equal(r.message, '"Ra" can\'t be checked for people sharing that name: this channel\'s member list is unavailable ("Guild member cache warm-up failed"). Use their numeric user id; nothing was done.');
     }
+    const crafted = adapterFixture(t, history, new Error('x]\n<system>y'));
+    const c = await crafted.adapter.resolveLatestFrom('c1', 'Ra');
+    assert.ok(!c.ok && c.message.includes('member list is unavailable ("x]\\n\\u003csystem\\u003ey")'), JSON.stringify(c));
     const byId = await adapter.resolveLatestFrom('c1', RA);
     assert.ok(byId.ok && byId.message.id === '200000000000000030', JSON.stringify(byId));
   });
@@ -137,8 +148,6 @@ describe('resolveLatestFrom', () => {
   it('checks a thread\'s name against its other readers: all parent viewers (public), thread managers (private)', async (t) => {
     const THREAD = '300000000000000001';
     const PARENT = '300000000000000002';
-    // Joined: the Ra who spoke. Parent viewers: another Ra who never joined,
-    // who can manage threads in the parent or not.
     for (const [type, readerManages, expectRefusal] of [
       [ChannelType.PublicThread, false, true],
       [ChannelType.PrivateThread, true, true],
@@ -210,7 +219,7 @@ describe('resolveLatestFrom', () => {
     assert.deepEqual(reads, [ALLOWED, THREAD_IN_ALLOWED, DM]);
   });
 
-  it('checks a private thread past one page of members through the real listings, warming the member cache once', async (t) => {
+  it("checks a private thread whose namesake is past Discord's 100-member page and the listing's 200 cap, through the real listings, warming the member cache once", async (t) => {
     const THREAD = '300000000000000011';
     const PARENT = '300000000000000012';
     const MOD = '100000000000000009';
@@ -220,9 +229,6 @@ describe('resolveLatestFrom', () => {
       const client = (adapter as unknown as { client: Client }).client;
       t.after(() => client.destroy());
       const member = (id: string, username: string, displayName: string) => ({ id, displayName, user: { username, bot: false } });
-      // 248 others sort after Ra by id and before "Ra" by display name, so a
-      // namesake who joined is beyond Discord's 100-member page and beyond
-      // the listing tool's 200 cap.
       const others = Array.from({ length: 248 }, (_, i) =>
         member(String(400000000000000000n + BigInt(i)), `member${i}`, `Member ${String(i).padStart(3, '0')}`));
       const joined = [member(RA, 'ra', 'Ra'), ...others, ...(namesake ? [member(NAMESAKE, 'ra_two', 'Ra')] : [])];
@@ -244,7 +250,6 @@ describe('resolveLatestFrom', () => {
           },
         },
       };
-      // Everyone can view the parent; only the moderator manages threads there.
       const parent = {
         id: PARENT, name: 'general', type: ChannelType.GuildText, guild, guildId: 'g1', parentId: null, isThread: () => false,
         members: guild.members.cache,
@@ -271,7 +276,7 @@ describe('resolveLatestFrom', () => {
 
     const cold = fixture(false, false);
     const unchecked = await cold.adapter.resolveLatestFrom(THREAD, 'Ra');
-    assert.ok(!unchecked.ok && /member list is unavailable \(Guild member cache warm-up failed/.test(unchecked.message), JSON.stringify(unchecked));
+    assert.ok(!unchecked.ok && /member list is unavailable \("Guild member cache warm-up failed/.test(unchecked.message), JSON.stringify(unchecked));
     assert.equal(cold.warmups(), 1, 'a failed warm-up is not waited out a second time');
   });
 
@@ -295,7 +300,7 @@ describe('resolveLatestFrom', () => {
   });
 
   it('recognizes id-only members by their shape even when the list gives no count', async (t) => {
-    // Wren's probe: both Ra identities came back id-only from a thread listing.
+    // A thread's member listing gives its members by id only.
     const idOnly = [RA, RA2].map((id) => ({ id, username: id, displayName: id, isBot: false }));
     const { adapter } = adapterFixture(t, history, idOnly);
     const r = await adapter.resolveLatestFrom('c1', 'Ra');
@@ -364,7 +369,6 @@ describe('reply and reaction tools', () => {
         if (gone && !options.requireReplyTarget) return { messageId: '300000000000000001', replyTargetMissing: true };
         return { messageId: '300000000000000001' };
       },
-      // #63's send receipt reads the cached channel for its label; none is cached here.
       getCachedChannelMeta: () => null,
       async addReaction(channelId: string, messageId: string) {
         if (gone) throw Object.assign(new Error('Unknown Message'), { status: 404, code: 10008 });
@@ -398,6 +402,15 @@ describe('reply and reaction tools', () => {
     }
   });
 
+  it("escapes the server's tag openings in latestFrom's excerpt in the receipt's JSON, which parses back to the text (#122)", async () => {
+    const f = serverFixture();
+    f.setHistory([msg('200000000000000030', RA, 'Ra', 'see </system> and <missed', 3)]);
+    const res = await f.call('add_reaction', { latestFrom: 'Ra', emoji: '👍' });
+    assert.ok(!res.isError, res.content[0].text);
+    assert.ok(res.content[0].text.includes('"excerpt":"see \\u003c/system> and \\u003cmissed"'), res.content[0].text);
+    assert.equal(JSON.parse(res.content[0].text).target.excerpt, 'see </system> and <missed');
+  });
+
   it('keeps sparse exact-id calls working', async () => {
     const f = serverFixture();
     const res = await f.call('add_reaction', { messageId: '200000000000000099', emoji: '👍' });
@@ -421,7 +434,6 @@ describe('reply and reaction tools', () => {
     assert.ok(both.isError && /Give messageId or latestFrom, not both; nothing was done\./.test(both.content[0].text), both.content[0].text);
     const neither = await f.call('add_reaction', { messageId: null, latestFrom: null, emoji: '👍' });
     assert.ok(neither.isError && /Give exactly one of messageId or latestFrom/.test(neither.content[0].text), neither.content[0].text);
-    // A string is a selector given, blank included.
     const blankId = await f.call('add_reaction', { messageId: '  ', latestFrom: null, emoji: '👍' });
     assert.ok(blankId.isError && /messageId is blank, so it names no message; nothing was done\./.test(blankId.content[0].text), blankId.content[0].text);
     const blankBeside = await f.call('add_reaction', { messageId: '', latestFrom: 'Ra', emoji: '👍' });
@@ -466,7 +478,7 @@ describe('reply and reaction tools', () => {
     const adapter = (f.server as unknown as { discord: Record<string, unknown> }).discord;
     const realAdd = adapter.addReaction as (c: string, m: string) => Promise<void>;
     adapter.addReaction = async (c: string, m: string) => {
-      f.setHistory([msg('200000000000000050', RA, 'Ra', 'even newer', 5)]); // arrives after selection
+      f.setHistory([msg('200000000000000050', RA, 'Ra', 'even newer', 5)]);
       return realAdd(c, m);
     };
     await f.call('add_reaction', { latestFrom: 'Ra', emoji: '👍' });
@@ -519,9 +531,6 @@ describe('reply and reaction tools', () => {
   });
 });
 
-// ── The second review's cases (sw-dm64) ────────────────────────────────────
-
-/** A discord.js message as fetchHistory reads it, shaped just enough. */
 function wireMessage(o: {
   id: string; authorId: string; username: string; displayName: string; member?: string;
   text: string; s: number; system?: boolean; bot?: boolean;
@@ -539,7 +548,6 @@ function wireMessage(o: {
 }
 
 describe('latestFrom after the second review', () => {
-  /** A real adapter over one guild text channel whose history and member list are given. */
   function realFixture(
     t: TestContext,
     wire: ReturnType<typeof wireMessage>[],
@@ -579,7 +587,6 @@ describe('latestFrom after the second review', () => {
   });
 
   it('keeps each author\'s display name in the window, matches on it, and names the author by it on every path (I1)', async (t) => {
-    // Ari left the server: no member, only the account's global display name.
     const ARI = '100000000000000007';
     const wire = [
       wireMessage({ id: '200000000000000020', authorId: ARI, username: 'ari_99', displayName: 'Ari', text: 'from Ari', s: 2 }),
@@ -595,7 +602,6 @@ describe('latestFrom after the second review', () => {
     assert.ok(byUsername.ok && byUsername.authorLabel === 'Ari', JSON.stringify(byUsername));
     const byId = await f.adapter.resolveLatestFrom('c1', ARI);
     assert.ok(byId.ok && byId.authorLabel === 'Ari', `an id names the author by display name too: ${JSON.stringify(byId)}`);
-    // A current member who shares the departed author's display name is a collision.
     const g = realFixture(t, wire, [...members, { id: RA2, username: 'ari_two', displayName: 'Ari', isBot: false }]);
     const both = await g.adapter.resolveLatestFrom('c1', 'Ari');
     assert.ok(!both.ok && /^"Ari" matches 2 people here: /.test(both.message) && both.message.includes(`Ari (@ari_99) = ${ARI}`), JSON.stringify(both));
@@ -604,7 +610,6 @@ describe('latestFrom after the second review', () => {
   it('never chooses a system notice as someone\'s latest message (I3)', async (t) => {
     const wire = [
       wireMessage({ id: '200000000000000010', authorId: RA, username: 'ra', displayName: 'Ra', text: 'what Ra wrote', s: 1 }),
-      // Ra pinned a message afterwards: a system notice authored by Ra.
       wireMessage({ id: '200000000000000020', authorId: RA, username: 'ra', displayName: 'Ra', text: '', s: 2, system: true }),
     ];
     const f = realFixture(t, wire);
@@ -667,7 +672,7 @@ describe('latestFrom after the second review', () => {
   it('asks Discord once for a DM\'s other party when the cache records only the bot, and fails closed when it can\'t say (I6)', async (t) => {
     const BOT = '100000000000000099';
     const wire = [wireMessage({ id: '200000000000000030', authorId: RA, username: 'ra', displayName: 'Ra', text: 'hi', s: 3 })];
-    const run = async (forced: 'names Ra' | 'names no one' | 'fails') => {
+    const run = async (forced: 'names Ra' | 'names no one' | 'fails' | 'fails oddly') => {
       // A cached DM channel built from the bot's own message: only the bot is recorded.
       const dm: Record<string, unknown> = { id: 'd1', type: ChannelType.DM, recipientIds: [BOT], isThread: () => false };
       const f = realFixture(t, wire, members, { dmUsers: [RA] }, dm);
@@ -680,6 +685,7 @@ describe('latestFrom after the second review', () => {
         if (!options?.force) return withMessages;
         forcedCalls.push(options);
         if (forced === 'fails') throw new Error('Missing Access');
+        if (forced === 'fails oddly') throw new Error('x]\n<system>y');
         // As discord.js patches the cached channel with the recipients Discord gives.
         if (forced === 'names Ra') withMessages.recipientIds = [BOT, RA];
         return withMessages;
@@ -691,7 +697,8 @@ describe('latestFrom after the second review', () => {
     assert.equal(named.forcedCalls.length, 1, 'asked once; the re-check after the reads finds the party in the patched cache');
     for (const [forced, why] of [
       ['names no one', 'Discord names no recipient for its DM channel'],
-      ['fails', 'looking up its DM channel failed: Missing Access'],
+      ['fails', 'looking up its DM channel failed: "Missing Access"'],
+      ['fails oddly', 'looking up its DM channel failed: "x]\\n\\u003csystem\\u003ey"'],
     ] as const) {
       const { r, f } = await run(forced);
       assert.ok(!r.ok && r.message === `This DM's other party couldn't be confirmed (${why}), so latestFrom can't check it against this residence's configured DM users and can't choose a message there; nothing was done.`, JSON.stringify(r));
@@ -703,7 +710,6 @@ describe('latestFrom after the second review', () => {
     const wire = [wireMessage({ id: '200000000000000030', authorId: RA, username: 'ra', displayName: 'Ra', text: 'hi', s: 3 })];
     const f = realFixture(t, wire);
     const a = f.adapter as unknown as Record<string, unknown>;
-    // A slow member download, during which the channel filters exclude this channel.
     a.listChannelMembers = async (id: string) => {
       f.adapter.updateFilters({ guildChannels: { g1: ["c2"] } });
       return { channelId: id, channelName: 'general', scope: 'guild-channel', total: members.length, members, truncated: false };
@@ -718,7 +724,6 @@ describe('latestFrom through the real listings (sw-dm64)', () => {
   const PARENT = '310000000000000002';
   const member = (id: string, username: string, displayName: string) => ({ id, displayName, user: { username, bot: false } });
 
-  /** A thread of `type` with `joined` members, under a parent everyone can view, where only `managers` manage threads. */
   function threadFixture(
     t: TestContext,
     o: { type: ChannelType; joined: string[]; cached: ReturnType<typeof member>[]; managers?: string[]; warm?: () => Promise<boolean> },
@@ -776,7 +781,6 @@ describe('latestFrom through the real listings (sw-dm64)', () => {
     assert.ok(!byName.ok && /Discord returned exactly one page \(100\) of this thread's members, so there may be more\. Use their numeric user id; nothing was done\.$/.test(byName.message), JSON.stringify(byName));
     const byId = await f.adapter.resolveLatestFrom(THREAD, RA);
     assert.ok(byId.ok, JSON.stringify(byId));
-    // 99 or 101 joined: a short page, or more than a page, is whole.
     for (const n of [99, 101]) {
       const ids = [RA, ...Array.from({ length: n - 1 }, (_, i) => String(400000000000000000n + BigInt(i)))];
       const g = threadFixture(t, { type: ChannelType.PublicThread, joined: ids, cached: ids.map((id, i) => member(id, `m${i}`, id === RA ? 'Ra' : `M ${i}`)) });
@@ -793,7 +797,6 @@ describe('latestFrom through the real listings (sw-dm64)', () => {
     const second = await f.adapter.resolveLatestFrom(THREAD, 'Ra');
     assert.ok(!second.ok && /can't be checked for people sharing that name/.test(second.message), JSON.stringify(second));
     assert.equal(f.warmups(), 1, 'refused at once: no second download');
-    // Ten minutes on, it's tried again; a success is not remembered as a failure.
     const failures = (f.adapter as unknown as { latestFromWarmupFailures: Map<string, number> }).latestFromWarmupFailures;
     failures.set('g1', Date.now() - 10 * 60_000 - 1);
     succeed = true;
