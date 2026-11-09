@@ -1,8 +1,3 @@
-/**
- * MCP tool definitions and input types for Discord operations.
- * These tools work in both MCP and MCPL mode.
- */
-
 export interface ToolDefinition {
   name: string;
   description: string;
@@ -16,7 +11,6 @@ export interface ToolDefinition {
   _meta?: Record<string, unknown>;
 }
 
-/** Reusable schema for the optional `files` attachment parameter on send tools. */
 const FILES_PROP = {
   type: 'array',
   description: 'Optional attachments: up to 10 files, each supplied by its absolute filesystem path on this host. Discord upload-size limits apply.',
@@ -31,7 +25,6 @@ const FILES_PROP = {
   },
 };
 
-/** Keep everyday addressing instructions local; edge cases live in docs/tool-reference.md. */
 const CHANNEL_ID_DESC =
   'Destination channel. Copy its qualified name from a channel listing (e.g. "#kitchen-table (Separatrix)"), ' +
   'or use a numeric Discord channel ID. Threads, categories and forum roots require numeric IDs. ' +
@@ -391,8 +384,9 @@ export const toolDefinitions: ToolDefinition[] = [
       'drops any existing ambient subscription, turns off its reaction visibility and ' +
       'closes the bridge channel. Use this ' +
       'to stay out of a channel that keeps pulling you in. Persisted across restarts. ' +
-      'Reverse with unmute_channel and explicitly reopen to restore ambient traffic. ' +
-      'If the host still lists it as open, use channel_close before channel_open.',
+      'channel_open doesn\'t lift a mute. Reverse with unmute_channel: its answer says ' +
+      'whether ordinary traffic is back or still needs channel_open, and if it does while ' +
+      'the host still lists the channel as open, use channel_close before channel_open.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -404,10 +398,12 @@ export const toolDefinitions: ToolDefinition[] = [
   {
     name: 'unmute_channel',
     description:
-      'Un-mute a Discord channel: mentions and DMs reach you again. Ordinary traffic, and ' +
-      'reactions unless set_reaction_visibility turned them on during the mute, stay stopped ' +
-      'until channel_open with its MCPL channel id. If the host still lists ' +
-      'it as open, use channel_close then channel_open to reconcile. Persisted across restarts.',
+      'Un-mute a Discord channel: mentions and DMs reach you again. For a muted channel, its ' +
+      'answer says whether ordinary traffic is back too or needs channel_open with its MCPL ' +
+      'channel id; until then ordinary traffic, and reactions unless set_reaction_visibility ' +
+      'turned them on during the mute, stay stopped. If channel_open is needed while the host ' +
+      'still lists it as open, use channel_close then channel_open to reconcile. ' +
+      'Persisted across restarts.',
     inputSchema: {
       type: 'object',
       properties: {
