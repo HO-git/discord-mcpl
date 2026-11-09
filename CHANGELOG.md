@@ -40,8 +40,9 @@ in the git log and PR descriptions.
     no tool here lists them, so a post's id comes only from a message
     posted in it or a link to it." It now says that the active posts the
     channel filters allow are the threads `list_channels` for its server
-    shows with that channel as their parent, and that an archived post's
-    id comes only from a message posted in it or a link to it.
+    shows with that channel as their parent, and that an archived post
+    isn't listed, so its id comes from where it was shown, such as a
+    message posted in it or a link to it.
 
 ### Fixed
 

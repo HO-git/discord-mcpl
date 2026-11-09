@@ -120,6 +120,12 @@ it('list_channels admits a thread through its parent, as the channel filter does
   assert.deepEqual(ids.sort(), [P, TH].sort());
 });
 
+it('list_channels admits a thread by its own id, though its parent is outside the filter', async (t) => {
+  const f = fixture(t, { threads: [threadData(TH, 'hidden', P), threadData(TQ, 'allowed', Q)], guildChannels: [TQ] });
+  const ids = (await f.adapter.listChannels(G)).map((c) => c.id);
+  assert.deepEqual(ids, [TQ]);
+});
+
 it('list_channels leaves out a thread still stale when its fetch fails', async (t) => {
   const f = fixture(t, { threads: [threadData(TH, 'topic', P)] });
   (f.adapter as any).markStale(TH, G);

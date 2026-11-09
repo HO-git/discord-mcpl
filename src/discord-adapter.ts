@@ -3086,7 +3086,7 @@ function noMessagesHere(channel: { type: number; guildId?: string | null }, chan
     );
   }
   const after = holdsPosts(channel.type)
-    ? ` Its posts are threads. The active ones the configured channel filters allow are the threads list_channels for server ${channel.guildId} shows with ${channelId} as their parent, and an archived post's id comes only from a message posted in it or a link to it. ` +
+    ? ` Its posts are threads. The active ones the configured channel filters allow are the threads list_channels for server ${channel.guildId} shows with ${channelId} as their parent. An archived post isn't listed, so its id comes from where it was shown, such as a message posted in it or a link to it. ` +
       "A post's messages are written through its id, and read through it where the configured channel filters allow."
     : channel.type === 4
       ? ` The channels in it that the configured channel filters allow are the ones list_channels for server ${channel.guildId} shows with ${channelId} as their parent.`

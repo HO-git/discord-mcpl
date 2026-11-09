@@ -2414,6 +2414,7 @@ it("list_channels fetches no stale channel in another server", async (t) => {
 
 it("list_channels fetches a stale channel first, and lists it as Discord has it now", async (t) => {
   const f = filtered(t);
+  assert.deepEqual((await f.adapter.listChannels(G)).map((c) => c.id).sort(), [P, C1, X, TH, TX].sort(), 'X and its thread, before');
   f.client.channels.cache.get(X).name = 'news-older';
   (f.adapter as any).stale.set(X, { guildId: G });
   f.client.channels.cache.get(P).name = 'before-older';
@@ -2447,6 +2448,7 @@ it("list_channels refuses a server whose outage begins while its stale channels 
 
 it("list_channels leaves out a channel still stale when its fetch fails", async (t) => {
   const f = filtered(t);
+  assert.deepEqual((await f.adapter.listChannels(G)).map((c) => c.id).sort(), [P, C1, X, TH, TX].sort(), 'X and its thread, before');
   (f.adapter as any).stale.set(X, { guildId: G });
   t.mock.method(f.client.rest, 'get', async () => { throw new Error('Service Unavailable'); });
   const listed = await f.adapter.listChannels(G);
