@@ -1856,7 +1856,7 @@ export class DiscordMcplServer {
           // Only an exact messageId gets here: a latestFrom reply fails instead.
           return withMentions({
             ...receipt,
-            unthreaded: `Message ${replyTo} wasn't found (deleted, or a wrong id), so this was posted as a plain message, not a reply.`,
+            unthreaded: `Message ${replyTo} wasn't found in this channel (deleted, a wrong id, or in another channel), so this was posted as a plain message, not a reply.`,
           }, result.report);
         }
         return withMentions(target ? { ...receipt, target } : receipt, result.report);

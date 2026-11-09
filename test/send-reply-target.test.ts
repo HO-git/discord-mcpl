@@ -75,6 +75,13 @@ describe('sendMessage reply target', () => {
     assert.equal(result.replyTargetMissing, undefined, 'later chunks carry no reference by design');
   });
 
+  it('says the target was missing for a long reply too, though later chunks carry no reference', async (t) => {
+    const { adapter, bodies } = adapterFixture(t);
+    const result = await adapter.sendMessage('dm1', 'word '.repeat(900), { replyTo: GONE });
+    assert.ok(bodies.length > 1, 'message was split');
+    assert.equal(result.replyTargetMissing, true);
+  });
+
   it('sends without a reply when no target is given', async (t) => {
     const { adapter, bodies } = adapterFixture(t);
     const result = await adapter.sendMessage('dm1', 'hello there');
